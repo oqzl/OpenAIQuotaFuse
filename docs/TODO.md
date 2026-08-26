@@ -8,40 +8,38 @@
 - [x] Add explicit long options with short aliases to `check` and `select` while retaining positional compatibility forms.
 - [x] Support `--model/-m`, `--estimated-tokens/-t`, and caller-selected `--quality/-q`; default quality is `low`.
 - [x] Keep complimentary quota groups separate from model quality/task difficulty.
-- [x] Prefer Terra over Luna for ordinary complimentary-quota execution while both consume the same high-volume token quota; retain Luna as the cheaper future paid-fallback candidate.
-- [ ] Decide whether legacy positional `check MODEL TOKENS` and `select TOKENS [MODEL ...]` should eventually be deprecated.
+- [x] Prefer Terra over Luna for ordinary complimentary-quota execution while both consume the same high-volume token quota.
+- [x] Legacy positional `check MODEL TOKENS` and `select TOKENS [MODEL ...]` remain supported through 0.x and are planned for removal at 1.0; option forms are canonical.
 
 ## P0 — `run` end-to-end flow
 
 - [x] Add `run` as the primary user-facing command.
-- [ ] Accept requests through `--input/-i` and stdin; positional prompt is currently supported.
+- [x] Accept requests through `--input/-i`, `--input -`, non-TTY stdin, and positional prompt input.
 - [x] Keep `OPENAI_API_KEY` separate from Organization Usage `OPENAI_ADMIN_KEY`.
-- [ ] Document where to create the Organization Admin key and its intended administrative-only use.
-- [x] Count the actual request input with `POST /responses/input_tokens` instead of the former byte-based local estimate.
+- [x] Document where Organization Owners create the Admin API key and its administrative-only use.
+- [x] Count actual request input with `POST /responses/input_tokens`.
 - [x] Reserve `input_tokens + max_output_tokens` before inference.
 - [x] Select/check a candidate against the conservative reservation before inference.
-- [x] Execute the Responses API request only after the quota check succeeds.
-- [x] Expose returned `usage.input_tokens`, `usage.output_tokens`, and `usage.total_tokens` in stderr diagnostics.
-- [x] Add `--max-output-tokens/-o` and `--model/-m` to `run`.
-- [ ] Add `--raw/-r` and `--input/-i` to `run`.
-- [ ] Define behavior for tools, structured output, files/images, previous responses, and other Responses API fields without turning the Shell reference into a generic API wrapper prematurely.
+- [x] Execute the Responses API request only after the quota/budget check succeeds.
+- [x] Expose returned usage in stderr diagnostics.
+- [x] Add `--max-output-tokens/-o`, `--model/-m`, `--raw/-r`, and `--input/-i` to `run`.
+- [x] Define P0 Responses scope: plain text only; tools, structured output, files/images, previous responses, and arbitrary fields are intentionally unsupported until quota/cost semantics are defined.
 
-## P0 — Annual prepaid-credit budget (next development priority)
+## P0 — Annual prepaid-credit budget
 
-- [ ] Implement this as the first follow-up after the current `run` work.
-- [ ] Treat purchased API prepaid credits as a separate budget from complimentary daily token quota.
-- [ ] Default policy: complimentary quota first; paid execution only while the configured annual paid-use budget remains below `$5`; block a request that would exceed the cap.
-- [ ] Keep the annual paid-use budget configurable, with `$5` as the intended default.
-- [ ] Estimate paid cost from current model input/output pricing before execution and account actual usage afterward when available.
-- [ ] Use a paid-fallback order that is cost-aware and separate from the complimentary-quota order; Luna should precede Terra for ordinary paid fallback while explicit `high` remains caller-controlled.
-- [ ] Determine the reliable source of truth for year-to-date paid spend; use explicit local/configured accounting rather than guessing if no official API suffices.
-- [ ] Define annual reset boundary and persistent accounting format.
-- [ ] Keep purchased-credit expiry handling separate from the annual cap; current purchased credits have a one-year expiry.
-- [ ] Determine whether official APIs expose prepaid balance and expiry metadata; do not scrape Billing UI for runtime decisions.
-- [ ] If reliable expiry metadata exists, design an optional burn-down policy for expiring credit.
-- [ ] Never silently exceed the annual cap, even when prepaid credit exists.
-- [ ] Define behavior for multiple grants/expiry dates and delayed billing/negative balance behavior.
-- [ ] If expiry cannot be retrieved, allow explicit user configuration rather than guessing.
+- [x] Treat intentional paid fallback as a separate budget from complimentary daily token quota.
+- [x] Default policy: complimentary quota first; paid execution only while the local UTC-calendar-year budget remains below `$5`; block a request whose worst-case reservation would exceed the cap.
+- [x] Make the annual paid-use budget configurable with `$5` default and `0` as disable.
+- [x] Estimate paid cost from reviewed model input/output pricing before execution and reconcile actual response usage afterward.
+- [x] Keep paid-fallback ordering separate: ordinary `low` is Luna → Terra → Sol; explicit `high` remains Sol-first.
+- [x] Use explicit local persistent accounting as the source of truth for the OpenAIQuotaFuse annual cap; do not guess OpenAI billing state.
+- [x] Define annual reset as January 1 00:00 UTC and persist an append-only JSON event ledger with reservation/reconciliation entries.
+- [x] Keep purchased-credit expiry separate from the annual cap; OpenAI currently documents purchased credits as expiring after one year.
+- [x] Do not scrape Billing UI. No reliable documented runtime prepaid balance + grant-expiry API is currently used.
+- [x] Do not implement expiry burn-down until reliable official expiry metadata exists.
+- [x] Never intentionally exceed the annual cap: persist the worst-case reservation before dispatch; retain it when inference outcome is unknown.
+- [x] Multiple grants, expiry dates, delayed billing, and negative OpenAI balance do not alter the local annual cap; the local ledger deliberately remains independent.
+- [x] If expiry metadata is unavailable, do not guess. Future explicit expiry configuration may be added only as an optional burn-down input.
 
 ## P1 — Accounting validation
 
@@ -55,7 +53,7 @@
 
 - [ ] Re-check incentive eligibility, quota groups, availability/deprecation, and API pricing whenever the policy audit expires.
 - [ ] Re-evaluate whether each automatic-selection candidate still has a reason to exist relative to newer models.
-- [ ] Keep complimentary-quota ordering and paid-fallback ordering independently justified; token-quota efficiency and dollar-cost efficiency are different objectives.
+- [ ] Keep complimentary-quota ordering and paid-fallback ordering independently justified.
 - [ ] Keep older active models in accounting even when removed from automatic selection.
 - [ ] Add tests ensuring every automatic-selection candidate exists in `models.json`.
 
@@ -64,30 +62,30 @@
 - [ ] Add broader Shell tests with mocked Usage API responses.
 - [ ] Cover UTC reset, tier limits, reserve calculation, unknown models, exhausted groups, and candidate fallback.
 - [ ] Cover long/short CLI aliases and explicit candidate ordering.
-- [x] Add a mocked test covering authoritative input-token counting and the documented `run` path, including actual usage diagnostics.
-- [ ] Add annual paid-budget tests: free-first, below-cap fallback, cap blocking, annual reset, persistence, and explicit `high`.
-- [ ] Add prepaid-credit expiry/burn-down tests if implemented.
+- [x] Add a mocked test covering authoritative input-token counting and `run`, including input/stdin/raw and actual usage diagnostics.
+- [x] Add mocked annual paid-budget coverage for free-first, paid fallback, cap blocking, persistence, and explicit paid ordering basics.
+- [ ] Add deeper annual-budget tests for annual reset and concurrent-process locking.
 - [ ] Run the same policy fixtures against future Python and Swift implementations.
 
 ## P2 — Python 3 implementation
 
 - [ ] Implement `spec/QUOTA_POLICY.md`, sharing `models.json` and `model-selection.json`.
 - [ ] Match useful Shell semantics while keeping the Python API idiomatic.
-- [ ] Implement the same conservative `run` reservation behavior.
+- [ ] Implement the same conservative `run` reservation and annual paid-budget behavior.
 
 ## P2 — Swift 6 implementation
 
 - [ ] Add a Swift Package implementing the same quota policy.
 - [ ] Share or generate strongly typed data from the machine-readable registries.
 - [ ] Keep networking and policy logic separable.
-- [ ] Implement the same conservative reservation behavior.
+- [ ] Implement the same conservative reservation and annual paid-budget behavior.
 
 ## Design constraints
 
-- Complimentary quota is always consumed first.
-- Paid fallback is bounded by the configured annual cap; intended default is `$5` per year.
-- Complimentary-quota model ordering optimizes capability per quota token; paid-fallback ordering optimizes capability/cost under the annual dollar budget.
-- Quota checks must not spend an inference call merely to choose a model. Input-token counting is a non-inference Responses API operation.
+- Complimentary quota is always attempted first.
+- Paid fallback is bounded by the configured local annual cap; intended default is `$5` per UTC calendar year.
+- Complimentary ordering optimizes capability per quota token; paid ordering optimizes capability/cost under a dollar budget.
+- Quota checks must not spend an inference call merely to choose a model.
 - Complimentary quota groups are not model-quality/task-difficulty profiles.
 - Current OpenAI primary documentation and observed API behavior take precedence over stale assumptions.
 - `spec/QUOTA_POLICY.md` remains the language-neutral behavioral source of truth.

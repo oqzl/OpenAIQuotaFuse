@@ -2,79 +2,89 @@
 
 ## Goal
 
-OpenAIQuotaFuse should normally prevent inference requests that would exceed OpenAI's complimentary daily token quota for eligible data-sharing traffic. Small billing leakage caused by reporting delay or concurrent clients is tolerated operationally, but paid quota is not yet treated as an available fallback budget.
+OpenAIQuotaFuse normally keeps inference inside OpenAI's complimentary daily token quota for eligible data-sharing traffic. When no complimentary candidate can fit a request, an explicitly bounded local annual paid budget may be used. The intended default is `$5` per UTC calendar year.
 
-## Reset boundary
+## Complimentary reset boundary
 
 The complimentary counter resets at 00:00 UTC every day.
 
 ## OpenAI policy data
 
-`models.json` is the repository's machine-readable snapshot of OpenAI's current complimentary-token policy data:
+`models.json` is the broad accounting registry for eligible model IDs, shared quota groups, tier limits, source, and review date. `model-selection.json` contains the smaller curated automatic-selection policy, paid fallback order, and reviewed prices used for the local hard cap.
 
-- eligible model IDs,
-- each model's shared quota group,
-- per-group daily limits for usage tiers 1-2 and 3-5,
-- the primary-source URL,
-- the date the snapshot was last reviewed.
-
-Shell, Python 3, and Swift 6 implementations must read this shared registry rather than duplicating model lists or quota constants in source code.
-
-The registry is not an OpenAI API response and can become stale. Changes to it must be checked against the current OpenAI primary documentation. Runtime scraping of the Help Center is deliberately not part of the quota decision path.
-
-Models explicitly documented as shut down are omitted even if they remain visible in historical offer documentation.
+Runtime scraping of OpenAI documentation or Billing UI is not part of quota decisions. Current OpenAI primary documentation takes precedence when the checked-in snapshot is stale.
 
 ## Request boundary
 
-If a new request would make the running daily total exceed the relevant quota, OpenAI bills the entire request at normal rates. Therefore a client must reserve enough quota for the whole request, not merely its expected overage.
+A request must reserve enough capacity for the whole request. For `run`, input tokens are counted with `POST /v1/responses/input_tokens` and `max_output_tokens` is added before inference.
 
-For `run`, input tokens are counted with the Responses input-token endpoint and `max_output_tokens` is added before inference.
+## Conservative complimentary accounting
 
-## Conservative accounting
+The Shell implementation sums all completion usage for models registered in each quota group. This may understate remaining complimentary quota, but it avoids falsely claiming free capacity until incentive-specific Usage API behavior is validated.
 
-The Shell MVP sums all completion usage for models registered in each quota group. This may understate remaining complimentary quota if some registered-model traffic was not itself eligible for the data-sharing incentive, but it avoids falsely claiming free capacity.
+A configurable percentage of each daily quota is unavailable as a safety reserve. Default: 5%.
 
-A future implementation may use a more precise incentive-specific signal if OpenAI exposes one through a stable documented API contract.
+    available = max(0, quota - accounted_usage - safety_reserve)
 
-## Safety reserve
+## Complimentary model selection
 
-A configurable percentage of the daily quota is treated as unavailable. Default: 5%.
-
-Available capacity is:
-
-    max(0, quota - accounted_usage - safety_reserve)
-
-A candidate model can be selected only when its group's available capacity is at least the reserved token requirement for the request.
-
-## Model selection
-
-The caller may supply models in preference order. If omitted, OpenAIQuotaFuse uses the curated quality profiles in `model-selection.json`.
-
-For complimentary quota, candidate ordering optimizes capability per quota token, not API dollar price. When two models consume the same shared complimentary token quota, the more capable model may be preferred even if its paid API price is higher.
-
-Current ordinary (`low`) preference order:
+Default `low`:
 
     gpt-5.6-terra
     gpt-5.6-luna
     gpt-5.6-sol
 
-Current explicit `high` preference order:
+Explicit `high`:
 
     gpt-5.6-sol
     gpt-5.6-terra
     gpt-5.6-luna
 
-Terra and Luna currently share the high-volume complimentary quota, so Luna's lower API dollar price does not reduce complimentary quota consumption. Terra is therefore preferred for ordinary complimentary execution. A future paid fallback policy should use a separately justified cost-aware ordering, where Luna can precede Terra.
+Complimentary ordering optimizes capability per shared quota token rather than API dollar price. Terra therefore precedes Luna while they share the same high-volume token pool.
 
-The first candidate whose quota group has sufficient available capacity is selected. If no candidate fits, selection fails without making an inference request.
+## Annual paid fallback
 
-Quality profiles map to explicit curated candidate lists and must not spend an inference call merely to classify the request.
+Paid fallback is separate from complimentary quota and is attempted only after the complimentary path cannot fit the request. `OPENAI_ANNUAL_PAID_BUDGET_USD` controls the hard local cap; the default is `$5`, and `0` disables paid fallback.
+
+Default paid `low` order is cost-aware:
+
+    gpt-5.6-luna
+    gpt-5.6-terra
+    gpt-5.6-sol
+
+Explicit `high` remains Sol-first:
+
+    gpt-5.6-sol
+    gpt-5.6-terra
+    gpt-5.6-luna
+
+Before a paid inference, the implementation counts input tokens for the paid candidate and computes a worst-case dollar reservation using current checked-in input/output prices and `max_output_tokens`. Long-context price multipliers documented by OpenAI are included. A request is blocked if:
+
+    year_to_date_local_spend + request_reservation > annual_cap
+
+The reservation is persisted before inference. On a successful response, it is reconciled to actual `usage.input_tokens` and `usage.output_tokens`. If the inference outcome is unknown because the request fails after dispatch, the reservation remains charged locally; this intentionally fails safe rather than silently risking the annual cap.
+
+The persistent ledger is local JSON, defaulting to:
+
+    ${XDG_STATE_HOME:-$HOME/.local/state}/openai-quota-fuse/paid-usage.json
+
+`OPENAI_QUOTA_FUSE_PAID_LEDGER` may override the path. Events are tagged with the UTC calendar year, so January 1 UTC starts a new annual budget without deleting historical records. A filesystem lock serializes paid reservations from concurrent local CLI processes sharing the ledger.
+
+This ledger is the source of truth for the OpenAIQuotaFuse annual cap. It does not claim to equal OpenAI's billing ledger, which may include unrelated clients, delayed billing, credits, tool-call charges, or other products.
+
+## Prepaid credits and expiry
+
+Purchased prepaid credits are a billing balance, not the OpenAIQuotaFuse annual budget. OpenAI currently documents purchased credits as expiring after one year and notes that delayed billing can produce a negative balance.
+
+No reliable documented runtime API for prepaid balance plus grant-level expiry metadata is currently used by this project. The Shell implementation therefore does not scrape Billing UI, infer expiry dates, or implement automatic expiry burn-down. If a future official API exposes reliable grant/expiry metadata, burn-down may be added as an optional policy without weakening the annual cap.
+
+## Responses API scope
+
+The Shell reference supports plain text input, model/quality selection, `max_output_tokens`, and raw response output. Tools, structured-output schemas, files/images, previous responses, and arbitrary Responses API fields are intentionally unsupported until their quota and paid-cost semantics are explicitly defined. The Shell reference is not a generic Responses API proxy.
 
 ## CLI option conventions
 
-Every long-form command-line option must have a short alias. New options are not complete until both forms are documented and tested.
-
-Prefer conventional aliases where possible and keep each alias unambiguous within a command. Planned examples include:
+Every long-form command-line option must have a short alias. Canonical options include:
 
     --quality, -q
     --input, -i
@@ -85,4 +95,6 @@ Prefer conventional aliases where possible and keep each alias unambiguous withi
     --help, -h
     --version, -v
 
-The long form is canonical in documentation and scripts where readability matters; the short form is provided for interactive use. Python and Swift APIs should preserve the same concepts even though short CLI aliases do not apply to their native function-call interfaces.
+`run --input TEXT`, `run --input -`, and non-TTY stdin are supported. Positional prompt input remains convenient for `run`.
+
+Legacy positional `check MODEL TOKENS` and `select TOKENS [MODEL ...]` are compatibility forms for 0.x. Long/short options are canonical and the positional compatibility forms are planned for removal at 1.0.

@@ -2,7 +2,7 @@
 
 [English](README.md) | 日本語
 
-OpenAIQuotaFuse は、OpenAI API の無料トークン枠をできるだけ超えないように API を呼ぶ quota guard です。
+OpenAIQuotaFuse は、OpenAI API の無料トークン枠を安全側に見積もって使い、無料枠に収まらない場合だけ小さな年間上限つきで有料 fallback する quota guard です。
 
 ## まずこれだけ
 
@@ -12,35 +12,53 @@ OpenAIQuotaFuse は、OpenAI API の無料トークン枠をできるだけ超�
     $EDITOR .env
     ./shell/openai-quota-fuse.sh run "富士山の高さは？"
 
-必要なのは Bash、curl、jq です。`OPENAI_ADMIN_KEY` は Organization Usage の取得、`OPENAI_API_KEY` は通常の Responses API 呼び出しに使います。
+必要なのは Bash、curl、jq です。
 
-普段の無料 quota 利用では `run` だけ覚えれば構いません。既定の `low` profile は次の順です。
+`OPENAI_ADMIN_KEY` は Organization Usage の取得だけに使います。Organization Owner は API Platform の Organization settings → Admin keys から作成できます: https://platform.openai.com/settings/organization/admin-keys 。通常の project `OPENAI_API_KEY` は input token 数の取得と推論に使い、Admin key とは分離してください。
+
+## モデル選択
+
+まず無料 quota を使います。既定の `low` は:
 
     gpt-5.6-terra → gpt-5.6-luna → gpt-5.6-sol
 
-Terra と Luna は現在、同じ high-volume の無料 token quota を共有し、無料枠の消費は API のドル単価ではなく token 数で数えます。そのため無料 quota 内では Luna の低価格は quota 節約になりません。より高性能な Terra を先に使い、Luna は将来の有料 fallback で安価な選択肢として活かす方針です。
-
-難しい仕事だけ `-q high` を明示します。
+Terra と Luna は high-volume の無料 token quota を共有するため、無料枠では quota token あたりの能力を優先して Terra を先にします。難しい仕事で `-q high` を明示した場合は:
 
     gpt-5.6-sol → gpt-5.6-terra → gpt-5.6-luna
 
-## `run` が確認するもの
+無料候補が保守的な予約量を確保できない場合だけ、年間有料予算を使えます。既定は `$5` です。
 
-推論前に、候補モデルと実際の prompt を `POST /v1/responses/input_tokens` に渡して公式の input token 数を取得します。予約する quota は次です。
+    OPENAI_ANNUAL_PAID_BUDGET_USD=5
+    OPENAI_ANNUAL_PAID_BUDGET_USD=0   # 有料 fallback を無効化
 
-    公式 input_tokens + max_output_tokens
+通常の有料 fallback はドル単価を重視して無料枠とは別順序です。
 
-この予約量が無料 quota に収まることを確認してから `POST /v1/responses` を実行します。完了後は実レスポンスの `usage.input_tokens`、`usage.output_tokens`、`usage.total_tokens` を診断情報として stderr に表示します。
+    gpt-5.6-luna → gpt-5.6-terra → gpt-5.6-sol
 
-    quota: OK (input=12 + max_output=256 => reserve=268 tokens)
-    model: gpt-5.6-terra
-    usage: input=12 output=34 total=46
+有料実行前に最大出力まで含めた最悪ケース費用をローカル ledger に予約し、実レスポンス取得後に実 usage の費用へ精算します。年間上限は UTC 暦年単位で判定し、過去年の event は履歴として残します。保存先は `OPENAI_QUOTA_FUSE_PAID_LEDGER` で変更できます。
 
-モデル固定と最大出力指定:
+プリペイド残高や個々の失効日時について、現時点で runtime 判定に使える信頼できる公式 API は確認できていないため、Billing UI のスクレイピングや推測はしません。購入済み credit は現在の OpenAI 公式説明では購入から1年で失効しますが、失効日は runtime model selection には使いません。
 
+## `run`
+
+推論前に `POST /v1/responses/input_tokens` で input token 数を取得し、次を予約します。
+
+    input_tokens + max_output_tokens
+
+入力方法:
+
+    ./shell/openai-quota-fuse.sh run "説明して"
+    ./shell/openai-quota-fuse.sh run -i "説明して"
+    printf '%s\n' "説明して" | ./shell/openai-quota-fuse.sh run
+    ./shell/openai-quota-fuse.sh run -i - < prompt.txt
     ./shell/openai-quota-fuse.sh run -m gpt-5.6-luna -o 256 "一言で説明して"
+    ./shell/openai-quota-fuse.sh run -r "Responses API の JSON をそのまま返して"
 
-なお、Organization Usage から無料 quota の残量を導く会計自体は、無料枠を過大評価しない安全側の判定を継続します。実際の incentive 適用量より早く停止する場合があります。
+`-r/--raw` では stdout に抽出済み text ではなく Responses API の完全な JSON を出します。quota/model/usage の診断情報は stderr のままです。
+
+Shell 版 P0 は plain text input と model/quality/max-output/raw に意図的に限定します。tools、structured output schema、files/images、`previous_response_id`、任意の Responses API field を中途半端な generic proxy として通しません。それらは quota/accounting 上の意味を定義してから追加します。
+
+旧 positional 形式 `check MODEL TOKENS` と `select TOKENS [MODEL ...]` は 0.x の間は互換維持します。正規形は long/short option とし、positional 互換は 1.0 で削除予定です。
 
 ## 中身を確認したくなったら
 
@@ -52,7 +70,7 @@ Terra と Luna は現在、同じ high-volume の無料 token quota を共有し
 
 ## ポリシーと保守
 
-無料枠の会計対象は `models.json`、自動選択候補は `model-selection.json` に分離しています。quota group は容量分類であり、モデル品質やタスク難易度ではありません。
+無料枠の会計対象は `models.json`、無料・有料の自動選択方針は `model-selection.json` に置きます。これらが古くなった場合は現在の OpenAI 一次資料を優先します。
 
 incentive 固有の Usage API 挙動を検証し終えるまでは、登録モデルの Usage をすべて消費として数えます。モデルポリシーは `bash scripts/audit-model-policy.sh` と週次 workflow で監査します。
 
