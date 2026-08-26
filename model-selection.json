@@ -8,15 +8,15 @@
     "pricing": "https://developers.openai.com/api/docs/pricing"
   },
   "default_candidates": [
-    "gpt-5.6-terra",
     "gpt-5.6-luna",
+    "gpt-5.6-terra",
     "gpt-5.6-sol"
   ],
   "default_quality": "low",
   "quality_profiles": {
     "low": [
-      "gpt-5.6-terra",
       "gpt-5.6-luna",
+      "gpt-5.6-terra",
       "gpt-5.6-sol"
     ],
     "high": [
