@@ -18,6 +18,7 @@
 - [x] Use a small Luna classifier to return exactly `low` or `high` before normal model selection.
 - [x] Keep explicit `-q low`, `-q high`, and `-m MODEL` stronger than automatic classification and bypass the classifier.
 - [x] Account for classifier input plus max output against complimentary quota before dispatch.
+- [x] Send only fields supported by `/responses/input_tokens` when counting classifier input; do not reuse response-only fields such as `max_output_tokens`.
 - [x] Never use paid fallback merely to classify quality; use configured `low` fallback if the classifier cannot run or returns invalid output.
 - [x] Emit classifier/model-routing diagnostics on stderr.
 - [x] Keep classifier model, effort, output cap, instructions, and fallback in `model-selection.json`.
@@ -37,7 +38,9 @@
 - [x] Expose returned usage in stderr diagnostics.
 - [x] Add `--max-output-tokens/-o`, `--model/-m`, `--raw/-r`, and `--input/-i` to `run`.
 - [x] Add `--effort/-e` for Responses API `reasoning.effort`, independent of model-selection `--quality/-q`.
-- [x] Define P0 Responses scope: plain text plus model/quality/effort/max-output/raw controls; tools, structured output, files/images, previous responses, and arbitrary fields remain intentionally unsupported until quota/cost semantics are defined.
+- [x] Add repeatable `--context/-c FILE` for explicit UTF-8 text context and include that full effective input in token counting.
+- [x] Add named `--session/-s NAME` continuation by persisting the latest response ID and passing `previous_response_id` to both token counting and inference.
+- [x] Keep the supported Responses scope explicit: plain text, explicit text context, named sessions, and model/quality/effort/max-output/raw controls; tools, structured output, images, arbitrary fields, directory recursion, and implicit file upload remain unsupported until quota/cost semantics are defined.
 
 ## P0 — Annual prepaid-credit budget
 
@@ -77,7 +80,7 @@
 ## P1 — Tests
 
 - [x] Add Python unit tests for quota grouping/reserve arithmetic, pricing, output extraction, and paid-ledger guard behavior.
-- [x] Add mocked HTTP E2E coverage for input token counting, input/stdin/raw, reasoning effort, auto quality routing, explicit classifier bypass, Costs API spend, paid fallback, ledger completion, and annual-cap blocking.
+- [x] Add mocked HTTP E2E coverage for input token counting, input/stdin/raw, reasoning effort, auto quality routing, explicit classifier bypass, strict input-token payloads, text context, named sessions, Costs API spend, paid fallback, ledger completion, and annual-cap blocking.
 - [x] Run Python syntax, unit, mocked E2E, and plugin-manifest JSON checks in CI on pull requests and `main` pushes.
 - [x] Keep Shell CI as a wrapper smoke test only; Shell delegates to the Python implementation and must not duplicate policy tests.
 - [ ] Cover UTC reset, tier limits, reserve calculation, unknown models, exhausted groups, and candidate fallback more deeply.
