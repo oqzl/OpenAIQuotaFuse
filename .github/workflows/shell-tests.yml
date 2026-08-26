@@ -1,4 +1,4 @@
-name: Shell tests
+name: Shell wrapper
 
 on:
   pull_request:
@@ -10,7 +10,12 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
       - name: Syntax check
-        run: bash -n shell/openai-quota-fuse.sh tests/shell/run-mocked.sh
-      - name: Mocked run test
-        run: bash tests/shell/run-mocked.sh
+        run: bash -n shell/openai-quota-fuse.sh
+      - name: Wrapper delegates to Python
+        run: |
+          test "$(./shell/openai-quota-fuse.sh --version)" = "0.10.0-dev"
+          test "$(PYTHON=python ./shell/openai-quota-fuse.sh --version)" = "0.10.0-dev"
