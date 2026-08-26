@@ -17,3 +17,18 @@ OpenAIQuotaFuse keeps OpenAI API usage inside the complimentary daily token quot
 - `swift/`: Swift 6 package (planned).
 
 The language-neutral policy in `spec/QUOTA_POLICY.md` takes precedence over implementation-specific behavior.
+
+## Documentation and TODO synchronization
+
+Implementation work is not complete until the repository documentation reflects the resulting state.
+
+When a change implements, removes, supersedes, or materially changes an item tracked in `docs/TODO.md` / `docs-ja/TODO.md`, update those TODO files in the same change. Do not leave implemented work unchecked or obsolete TODO wording behind.
+
+Before completing a development task, explicitly review:
+
+- `README.md` / `README-ja.md` when user-facing behavior, setup, defaults, or examples changed.
+- `docs/TODO.md` / `docs-ja/TODO.md` when tracked work changed state or scope.
+- `spec/QUOTA_POLICY.md` when language-independent behavior or policy changed.
+- `model-selection.json` / `models.json` when model or quota policy changed.
+
+Paired English/Japanese baseline documents should remain semantically synchronized.
