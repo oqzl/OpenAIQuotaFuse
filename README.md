@@ -10,20 +10,28 @@ OpenAIQuotaFuse is a quota guard for calling the OpenAI API while conservatively
     cd OpenAIQuotaFuse
     cp .env.example .env
     $EDITOR .env
-    ./shell/openai-quota-fuse.sh run "How high is Mount Fuji?"
+    python3 python/openai_quota_fuse.py run "How high is Mount Fuji?"
 
-Requirements: Bash, curl, and jq.
+The Python 3 CLI is the canonical implementation and the execution surface used by the Codex plugin. It uses only the Python standard library. Unix users can also call `./shell/openai-quota-fuse.sh`; it is a thin Bash compatibility wrapper that delegates to the same Python CLI, so it requires Bash and Python 3 but does not maintain separate quota logic.
 
 `OPENAI_ADMIN_KEY` is used only for Organization Usage and Costs. Organization Owners can create an Admin API key from the API Platform dashboard under Organization settings → Admin keys: https://platform.openai.com/settings/organization/admin-keys . Keep it separate from the normal project `OPENAI_API_KEY`, which is used for input-token counting and inference.
+
+## Codex plugin
+
+This repository also contains a Codex plugin manifest and bundled `quota-fuse` Skill. The plugin lets Codex inspect quota/costs, select a policy-approved model, or dispatch a secondary OpenAI API request through the Fuse policy.
+
+It does not replace the model already running the current Codex turn. Fuse governs API calls that Codex explicitly dispatches through the plugin-facing Python CLI.
+
+See [docs/CODEX_PLUGIN.md](docs/CODEX_PLUGIN.md) for local marketplace installation and usage.
 
 ## Selection policy
 
 `run` defaults to `auto` quality. Before normal model selection, a small difficulty classifier may route an ordinary task to `low` or promote a difficult task to `high` while staying inside complimentary quota.
 
-    ./shell/openai-quota-fuse.sh run "Translate to Japanese: good morning"
+    python3 python/openai_quota_fuse.py run "Translate to Japanese: good morning"
     # quality: auto -> low
 
-    ./shell/openai-quota-fuse.sh run "Review this repository architecture and design a broad refactor"
+    python3 python/openai_quota_fuse.py run "Review this repository architecture and design a broad refactor"
     # quality: auto -> high
 
 The classifier uses `gpt-5.6-luna`, low reasoning effort, and at most 8 output tokens. Its own `input_tokens + max_output_tokens` must fit complimentary quota before the classifier is called. If classification cannot run or returns anything other than `low` / `high`, OpenAIQuotaFuse does not spend money on routing; it falls back to `low`.
@@ -57,8 +65,8 @@ The annual cap uses the official Organization Costs API as its spend floor. This
 
 Inspect the current accounting with:
 
-    ./shell/openai-quota-fuse.sh costs
-    ./shell/openai-quota-fuse.sh costs -r
+    python3 python/openai_quota_fuse.py costs
+    python3 python/openai_quota_fuse.py costs -r
 
 The normal output separates `official_costs_usd`, the recent local lag guard, and the effective amount used for budget checks. The Costs endpoint is paginated from January 1 00:00 UTC so a full UTC calendar year is covered.
 
@@ -72,37 +80,39 @@ Before inference, `run` calls `POST /v1/responses/input_tokens`, then reserves:
 
 Examples:
 
-    ./shell/openai-quota-fuse.sh run "Explain this"
-    ./shell/openai-quota-fuse.sh run -i "Explain this"
-    printf '%s\n' "Explain this" | ./shell/openai-quota-fuse.sh run
-    ./shell/openai-quota-fuse.sh run -i - < prompt.txt
-    ./shell/openai-quota-fuse.sh run -q low "Treat this as a cheap task"
-    ./shell/openai-quota-fuse.sh run -q high "Prefer high-quality routing"
-    ./shell/openai-quota-fuse.sh run -m gpt-5.6-luna -o 256 "Answer in one sentence"
-    ./shell/openai-quota-fuse.sh run -e high "Think carefully"
-    ./shell/openai-quota-fuse.sh run -r "Return the full Responses API JSON"
+    python3 python/openai_quota_fuse.py run "Explain this"
+    python3 python/openai_quota_fuse.py run -i "Explain this"
+    printf '%s\n' "Explain this" | python3 python/openai_quota_fuse.py run
+    python3 python/openai_quota_fuse.py run -i - < prompt.txt
+    python3 python/openai_quota_fuse.py run -q low "Treat this as a cheap task"
+    python3 python/openai_quota_fuse.py run -q high "Prefer high-quality routing"
+    python3 python/openai_quota_fuse.py run -m gpt-5.6-luna -o 256 "Answer in one sentence"
+    python3 python/openai_quota_fuse.py run -e high "Think carefully"
+    python3 python/openai_quota_fuse.py run -r "Return the full Responses API JSON"
 
 `-q/--quality` accepts `auto`, `low`, or `high` for `run`; omitting it means `auto`. `-e/--effort` controls Responses API `reasoning.effort` independently. `quality` chooses the model order while `effort` controls how much reasoning the selected model performs. Supported effort values are `none`, `low`, `medium`, `high`, `xhigh`, and `max`. Omitting effort leaves the model/API default unchanged.
 
 `-r/--raw` changes stdout from extracted output text to the complete Responses API JSON. Classifier, quota, model, and usage diagnostics remain on stderr.
 
-The Shell reference deliberately accepts only plain text input plus model/quality/effort/max-output/raw controls. Tools, structured-output schemas, files/images, `previous_response_id`, and arbitrary Responses API fields are out of scope for the Shell P0 rather than being partially proxied. Add them only when OpenAIQuotaFuse has explicit quota/accounting semantics for them.
+The canonical Python implementation deliberately accepts only plain text input plus model/quality/effort/max-output/raw controls. Tools, structured-output schemas, files/images, `previous_response_id`, and arbitrary Responses API fields remain out of scope until OpenAIQuotaFuse has explicit quota/accounting semantics for them.
 
 Legacy positional `check MODEL TOKENS` and `select TOKENS [MODEL ...]` remain compatible throughout 0.x. The canonical documented forms are long/short options; positional compatibility is planned for removal at 1.0 rather than accumulating indefinitely.
 
 ## Inspection commands
 
-    ./shell/openai-quota-fuse.sh status
-    ./shell/openai-quota-fuse.sh costs
-    ./shell/openai-quota-fuse.sh models
-    ./shell/openai-quota-fuse.sh select -t 8000
-    ./shell/openai-quota-fuse.sh check -m gpt-5.6-sol -t 8000
-    ./shell/openai-quota-fuse.sh status -r
+    python3 python/openai_quota_fuse.py status
+    python3 python/openai_quota_fuse.py costs
+    python3 python/openai_quota_fuse.py models
+    python3 python/openai_quota_fuse.py select -t 8000
+    python3 python/openai_quota_fuse.py check -m gpt-5.6-sol -t 8000
+    python3 python/openai_quota_fuse.py status -r
+
+The equivalent Shell entry point remains available through `./shell/openai-quota-fuse.sh`; it delegates directly to the Python CLI.
 
 ## Policy and maintenance
 
 Eligible models and quota-group limits live in `models.json`; curated complimentary/paid selection and classifier policy live in `model-selection.json`. Current OpenAI primary documentation takes precedence over these snapshots when they become stale.
 
-The Shell implementation deliberately counts all usage on registered models until incentive-specific Usage API behavior is validated. Organization Costs is used for financial accounting because OpenAI recommends the Costs endpoint for spend that should reconcile to billing. `bash scripts/audit-model-policy.sh` checks model-policy review age; the GitHub workflow also runs weekly.
+The canonical implementation deliberately counts all usage on registered models until incentive-specific Usage API behavior is validated. Organization Costs is used for financial accounting because OpenAI recommends the Costs endpoint for spend that should reconcile to billing. `bash scripts/audit-model-policy.sh` checks model-policy review age; the GitHub workflow also runs weekly.
 
 See `spec/QUOTA_POLICY.md` for language-neutral policy and [docs/TODO.md](docs/TODO.md) for remaining work.

@@ -76,19 +76,31 @@
 
 ## P1 — Tests
 
-- [ ] Add broader Shell tests with mocked Usage API responses.
-- [ ] Cover UTC reset, tier limits, reserve calculation, unknown models, exhausted groups, and candidate fallback.
+- [x] Add Python unit tests for quota grouping/reserve arithmetic, pricing, output extraction, and paid-ledger guard behavior.
+- [x] Add mocked HTTP E2E coverage for input token counting, input/stdin/raw, reasoning effort, auto quality routing, explicit classifier bypass, Costs API spend, paid fallback, ledger completion, and annual-cap blocking.
+- [x] Run Python syntax, unit, mocked E2E, and plugin-manifest JSON checks in CI on pull requests and `main` pushes.
+- [x] Keep Shell CI as a wrapper smoke test only; Shell delegates to the Python implementation and must not duplicate policy tests.
+- [ ] Cover UTC reset, tier limits, reserve calculation, unknown models, exhausted groups, and candidate fallback more deeply.
 - [ ] Cover long/short CLI aliases and explicit candidate ordering.
-- [x] Add a mocked test covering authoritative input-token counting and `run`, including input/stdin/raw, reasoning effort, actual usage diagnostics, auto quality routing, and explicit classifier bypass.
-- [x] Add mocked annual paid-budget coverage for free-first, paid fallback, Costs API external spend, cap blocking, persistence, and explicit paid ordering basics.
 - [ ] Add deeper annual-budget tests for annual reset, Costs pagination, legacy-ledger migration, and concurrent-process locking.
-- [ ] Run the same policy fixtures against future Python and Swift implementations.
+- [ ] Reuse the same policy fixtures for a future Swift implementation.
 
-## P2 — Python 3 implementation
+## P1 — Python 3 implementation
 
-- [ ] Implement `spec/QUOTA_POLICY.md`, sharing `models.json` and `model-selection.json`.
-- [ ] Match useful Shell semantics while keeping the Python API idiomatic.
-- [ ] Implement the same conservative `run`, auto-quality, reasoning-effort, Organization Costs, and annual paid-budget behavior.
+- [x] Implement the core `spec/QUOTA_POLICY.md` semantics using shared `models.json` and `model-selection.json`.
+- [x] Match useful Shell CLI semantics for `run`, `status`, `costs`, `check`, `select`, and `models` using Python standard library networking and argument parsing.
+- [x] Implement conservative reservation, auto-quality, reasoning effort, Organization Costs, annual paid fallback, and the local lag guard.
+- [x] Make Python the canonical implementation and replace the former Shell implementation with a thin compatibility wrapper.
+- [x] Add mocked HTTP end-to-end coverage to the Python implementation.
+
+## P1 — Codex plugin
+
+- [x] Add `.codex-plugin/plugin.json` and a bundled `quota-fuse` Skill.
+- [x] Use Python as the plugin-facing and canonical execution surface; keep Shell only as a Unix compatibility wrapper.
+- [x] Document local marketplace installation and credential setup in English/Japanese.
+- [x] Explicitly document that the plugin governs secondary API calls dispatched through Fuse and cannot change the model already running the current Codex turn.
+- [x] Validate plugin manifest JSON in CI.
+- [ ] Add a stable standalone Codex plugin validator when one is available in the development environment.
 
 ## P2 — Swift 6 implementation
 
