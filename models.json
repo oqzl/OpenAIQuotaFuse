@@ -4,7 +4,7 @@
   "source": "https://help.openai.com/en/articles/10306912-sharing-feedback-evals-and-api-data-with-openai",
   "quota_groups": {
     "standard": {
-      "limits": {
+      "daily_token_limits": {
         "tier_1_2": 250000,
         "tier_3_5": 1000000
       },
@@ -23,7 +23,7 @@
       ]
     },
     "high_volume": {
-      "limits": {
+      "daily_token_limits": {
         "tier_1_2": 2500000,
         "tier_3_5": 10000000
       },
