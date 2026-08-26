@@ -1,11 +1,12 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-readonly VERSION="0.2.0-dev"
+readonly VERSION="0.3.0-dev"
 readonly USAGE_URL="https://api.openai.com/v1/organization/usage/completions"
 readonly SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 readonly REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 readonly DEFAULT_MODELS_FILE="$REPO_ROOT/models.json"
+readonly DEFAULT_SELECTION_FILE="$REPO_ROOT/model-selection.json"
 
 usage() {
   cat <<'USAGE'
@@ -14,21 +15,23 @@ OpenAIQuotaFuse (Shell MVP)
 Usage:
   openai-quota-fuse.sh status [--raw]
   openai-quota-fuse.sh check MODEL TOKENS
-  openai-quota-fuse.sh select TOKENS MODEL [MODEL ...]
+  openai-quota-fuse.sh select TOKENS [MODEL ...]
   openai-quota-fuse.sh models
   openai-quota-fuse.sh version
 
 Environment:
-  OPENAI_ADMIN_KEY               Admin key for Organization Usage API (required)
-  OPENAI_USAGE_TIER              OpenAI usage tier 1..5 (default: 1, conservative)
-  OPENAI_QUOTA_RESERVE_PERCENT   Safety reserve percentage (default: 5)
-  OPENAI_QUOTA_FUSE_ENV_FILE     Optional env file path (default: ./.env if present)
-  OPENAI_QUOTA_FUSE_MODELS_FILE  Optional model-registry path (default: repo models.json)
+  OPENAI_ADMIN_KEY                  Admin key for Organization Usage API (required)
+  OPENAI_USAGE_TIER                 OpenAI usage tier 1..5 (default: 1, conservative)
+  OPENAI_QUOTA_RESERVE_PERCENT      Safety reserve percentage (default: 5)
+  OPENAI_QUOTA_FUSE_ENV_FILE        Optional env file path (default: ./.env if present)
+  OPENAI_QUOTA_FUSE_MODELS_FILE     Optional accounting registry path
+  OPENAI_QUOTA_FUSE_SELECTION_FILE  Optional curated selection policy path
 
 Examples:
   ./shell/openai-quota-fuse.sh status
   ./shell/openai-quota-fuse.sh status --raw
   ./shell/openai-quota-fuse.sh check gpt-5.6-sol 8000
+  ./shell/openai-quota-fuse.sh select 8000
   ./shell/openai-quota-fuse.sh select 8000 gpt-5.6-sol gpt-5.6-luna gpt-5.6-terra
 USAGE
 }
@@ -54,7 +57,6 @@ load_env_key() {
   local file="$1" key="$2" line value
   [[ -f "$file" ]] || return 0
   [[ -n "${!key:-}" ]] && return 0
-
   line="$(grep -E "^[[:space:]]*(export[[:space:]]+)?${key}=" "$file" | tail -n 1 || true)"
   [[ -n "$line" ]] || return 0
   line="${line#export }"
@@ -69,46 +71,39 @@ load_env_file() {
   load_env_key "$file" OPENAI_USAGE_TIER
   load_env_key "$file" OPENAI_QUOTA_RESERVE_PERCENT
   load_env_key "$file" OPENAI_QUOTA_FUSE_MODELS_FILE
+  load_env_key "$file" OPENAI_QUOTA_FUSE_SELECTION_FILE
 }
 
-models_file() {
-  printf '%s\n' "${OPENAI_QUOTA_FUSE_MODELS_FILE:-$DEFAULT_MODELS_FILE}"
-}
+models_file() { printf '%s\n' "${OPENAI_QUOTA_FUSE_MODELS_FILE:-$DEFAULT_MODELS_FILE}"; }
+selection_file() { printf '%s\n' "${OPENAI_QUOTA_FUSE_SELECTION_FILE:-$DEFAULT_SELECTION_FILE}"; }
 
 validate_registry() {
   local file
   file="$(models_file)"
-  [[ -r "$file" ]] || {
-    echo "error: model registry not readable: $file" >&2
-    exit 2
-  }
+  [[ -r "$file" ]] || { echo "error: model registry not readable: $file" >&2; exit 2; }
   jq -e '
     .schema_version == 1 and
     (.quota_groups | type == "object") and
     ([.quota_groups[] | (.models | type == "array") and (.daily_token_limits.tier_1_2 | type == "number") and (.daily_token_limits.tier_3_5 | type == "number")] | all)
-  ' "$file" >/dev/null || {
-    echo "error: invalid model registry: $file" >&2
+  ' "$file" >/dev/null || { echo "error: invalid model registry: $file" >&2; exit 2; }
+}
+
+validate_selection() {
+  local file
+  file="$(selection_file)"
+  [[ -r "$file" ]] || { echo "error: selection policy not readable: $file" >&2; exit 2; }
+  jq -e '.schema_version == 1 and (.default_candidates | type == "array") and (.default_candidates | length > 0)' "$file" >/dev/null || {
+    echo "error: invalid selection policy: $file" >&2
     exit 2
   }
 }
 
 validate_config() {
-  [[ -n "${OPENAI_ADMIN_KEY:-}" ]] || {
-    echo "error: OPENAI_ADMIN_KEY is not set (environment or .env)" >&2
-    exit 2
-  }
-
+  [[ -n "${OPENAI_ADMIN_KEY:-}" ]] || { echo "error: OPENAI_ADMIN_KEY is not set (environment or .env)" >&2; exit 2; }
   OPENAI_USAGE_TIER="${OPENAI_USAGE_TIER:-1}"
   OPENAI_QUOTA_RESERVE_PERCENT="${OPENAI_QUOTA_RESERVE_PERCENT:-5}"
-
-  [[ "$OPENAI_USAGE_TIER" =~ ^[1-5]$ ]] || {
-    echo "error: OPENAI_USAGE_TIER must be 1..5" >&2
-    exit 2
-  }
-  [[ "$OPENAI_QUOTA_RESERVE_PERCENT" =~ ^([0-9]|[1-9][0-9]|100)$ ]] || {
-    echo "error: OPENAI_QUOTA_RESERVE_PERCENT must be an integer 0..100" >&2
-    exit 2
-  }
+  [[ "$OPENAI_USAGE_TIER" =~ ^[1-5]$ ]] || { echo "error: OPENAI_USAGE_TIER must be 1..5" >&2; exit 2; }
+  [[ "$OPENAI_QUOTA_RESERVE_PERCENT" =~ ^([0-9]|[1-9][0-9]|100)$ ]] || { echo "error: OPENAI_QUOTA_RESERVE_PERCENT must be an integer 0..100" >&2; exit 2; }
   validate_registry
 }
 
@@ -122,9 +117,7 @@ quota_for_group() {
 model_group() {
   local model="$1" file
   file="$(models_file)"
-  jq -er --arg model "$model" '
-    .quota_groups | to_entries[] | select(.value.models | index($model)) | .key
-  ' "$file" | head -n 1
+  jq -er --arg model "$model" '.quota_groups | to_entries[] | select(.value.models | index($model)) | .key' "$file" | head -n 1
 }
 
 utc_day_start_epoch() {
@@ -157,8 +150,7 @@ summarize_usage() {
         ($r.model // "") as $model |
         ([ $groups | to_entries[] | select(.value.models | index($model)) | .key ][0] // null) as $group |
         if $group == null then .
-        else .[$group] = ((.[$group] // 0) + (($r.input_tokens // 0) + ($r.output_tokens // 0)))
-        end
+        else .[$group] = ((.[$group] // 0) + (($r.input_tokens // 0) + ($r.output_tokens // 0))) end
       ) |
     reduce ($groups | keys[]) as $g (. ; .[$g] = (.[$g] // 0))
   ' <<<"$json"
@@ -176,12 +168,8 @@ available_for_group() {
 print_status() {
   local raw_flag="${1:-}" raw summary group used quota available
   raw="$(fetch_usage "$(utc_day_start_epoch)")"
-  if [[ "$raw_flag" == "--raw" ]]; then
-    jq . <<<"$raw"
-    return 0
-  fi
+  if [[ "$raw_flag" == "--raw" ]]; then jq . <<<"$raw"; return 0; fi
   summary="$(summarize_usage "$raw")"
-
   printf 'OpenAIQuotaFuse status (UTC day)\n'
   printf 'Usage tier: %s | Safety reserve: %s%%\n' "$OPENAI_USAGE_TIER" "$OPENAI_QUOTA_RESERVE_PERCENT"
   printf 'Registry: %s (reviewed %s)\n\n' "$(models_file)" "$(jq -r '.last_reviewed' "$(models_file)")"
@@ -200,15 +188,11 @@ print_status() {
 check_model() {
   local model="$1" tokens="$2" raw summary group used available
   [[ "$tokens" =~ ^[0-9]+$ ]] || { echo "error: TOKENS must be a non-negative integer" >&2; exit 2; }
-  group="$(model_group "$model")" || {
-    echo "error: model is not in models.json: $model" >&2
-    exit 3
-  }
+  group="$(model_group "$model")" || { echo "error: model is not in models.json: $model" >&2; exit 3; }
   raw="$(fetch_usage "$(utc_day_start_epoch)")"
   summary="$(summarize_usage "$raw")"
   used="$(jq -r --arg g "$group" '.[$g]' <<<"$summary")"
   available="$(available_for_group "$group" "$used")"
-
   if (( tokens <= available )); then
     printf 'ALLOW %s group=%s requested=%d available=%d\n' "$model" "$group" "$tokens" "$available"
     return 0
@@ -220,12 +204,17 @@ check_model() {
 select_model() {
   local tokens="$1"; shift
   local raw summary model group used available
+  local candidates=()
   [[ "$tokens" =~ ^[0-9]+$ ]] || { echo "error: TOKENS must be a non-negative integer" >&2; exit 2; }
-  (( $# > 0 )) || { echo "error: select requires at least one MODEL" >&2; exit 2; }
+
+  if (( $# == 0 )); then
+    validate_selection
+    while IFS= read -r model; do candidates+=("$model"); done < <(jq -r '.default_candidates[]' "$(selection_file)")
+    set -- "${candidates[@]}"
+  fi
 
   raw="$(fetch_usage "$(utc_day_start_epoch)")"
   summary="$(summarize_usage "$raw")"
-
   for model in "$@"; do
     if ! group="$(model_group "$model")"; then
       printf 'SKIP  %s reason=not-in-model-registry\n' "$model" >&2
@@ -233,29 +222,25 @@ select_model() {
     fi
     used="$(jq -r --arg g "$group" '.[$g]' <<<"$summary")"
     available="$(available_for_group "$group" "$used")"
-    if (( tokens <= available )); then
-      printf '%s\n' "$model"
-      return 0
-    fi
+    if (( tokens <= available )); then printf '%s\n' "$model"; return 0; fi
     printf 'SKIP  %s group=%s requested=%d available=%d\n' "$model" "$group" "$tokens" "$available" >&2
   done
-
   echo 'error: no candidate model has enough complimentary quota' >&2
   return 4
 }
 
 print_models() {
-  jq -r '
-    "Registry reviewed: \(.last_reviewed)\nSource: \(.source)\n",
-    (.quota_groups | to_entries[] | "\(.key):\n" + (.value.models | map("  " + .) | join("\n")) + "\n")
-  ' "$(models_file)"
+  jq -r '"Registry reviewed: \(.last_reviewed)\nSource: \(.source)\n", (.quota_groups | to_entries[] | "\(.key):\n" + (.value.models | map("  " + .) | join("\n")) + "\n")' "$(models_file)"
+  if [[ -r "$(selection_file)" ]]; then
+    printf 'Default selection order (reviewed %s):\n' "$(jq -r '.last_reviewed' "$(selection_file)")"
+    jq -r '.default_candidates[] | "  " + .' "$(selection_file)"
+  fi
 }
 
 main() {
   need_command curl
   need_command jq
   load_env_file
-
   case "${1:-}" in
     status)
       validate_config; shift
@@ -270,21 +255,15 @@ main() {
       ;;
     select)
       validate_config
-      [[ $# -ge 3 ]] || { usage >&2; exit 2; }
+      [[ $# -ge 2 ]] || { usage >&2; exit 2; }
       shift; select_model "$@"
       ;;
     models)
       validate_registry; print_models
       ;;
-    version|--version|-v)
-      printf '%s\n' "$VERSION"
-      ;;
-    help|--help|-h|'')
-      usage
-      ;;
-    *)
-      usage >&2; exit 2
-      ;;
+    version|--version|-v) printf '%s\n' "$VERSION" ;;
+    help|--help|-h|'') usage ;;
+    *) usage >&2; exit 2 ;;
   esac
 }
 
