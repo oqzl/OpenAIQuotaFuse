@@ -1,78 +1,741 @@
 #!/usr/bin/env bash
 set -euo pipefail
-readonly VERSION="0.7.0-dev"
+
+readonly VERSION="0.8.0-dev"
 readonly USAGE_URL="https://api.openai.com/v1/organization/usage/completions"
+readonly COSTS_URL="https://api.openai.com/v1/organization/costs"
 readonly RESPONSES_URL="https://api.openai.com/v1/responses"
 readonly INPUT_TOKENS_URL="https://api.openai.com/v1/responses/input_tokens"
 readonly SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 readonly REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 readonly DEFAULT_MODELS_FILE="$REPO_ROOT/models.json"
 readonly DEFAULT_SELECTION_FILE="$REPO_ROOT/model-selection.json"
+readonly LOCAL_COST_GUARD_SECONDS=$((7 * 24 * 60 * 60))
 
 usage() { cat <<'USAGE'
 OpenAIQuotaFuse
 Usage:
-  openai-quota-fuse.sh run [--quality PROFILE] [--model MODEL] [--max-output-tokens TOKENS] [--input TEXT] [--raw]
+  openai-quota-fuse.sh run [--quality PROFILE] [--effort LEVEL] [--model MODEL] [--max-output-tokens TOKENS] [--input TEXT] [--raw]
   openai-quota-fuse.sh status [--raw|-r]
+  openai-quota-fuse.sh costs [--raw|-r]
   openai-quota-fuse.sh check --model MODEL --estimated-tokens TOKENS
   openai-quota-fuse.sh select --estimated-tokens TOKENS [--quality PROFILE] [--model MODEL ...]
   openai-quota-fuse.sh models
   openai-quota-fuse.sh version
+
 Compatibility forms (supported through 0.x; planned removal at 1.0):
   openai-quota-fuse.sh check MODEL TOKENS
   openai-quota-fuse.sh select TOKENS [MODEL ...]
+
 Run input:
   -i, --input TEXT               Prompt text. Use '-' to read stdin.
                                  With no prompt argument, non-TTY stdin is read automatically.
+
 Options:
   -m, --model MODEL              Model to use/check or explicit selection candidate
   -t, --estimated-tokens TOKENS Conservative token requirement for check/select
   -o, --max-output-tokens TOKENS Maximum output tokens for run (default: 1024)
-  -q, --quality PROFILE          Selection profile: high or low (default: low)
-  -r, --raw                      For run, print the complete Responses API JSON
+  -q, --quality PROFILE          Model-selection profile: high or low (default: low)
+  -e, --effort LEVEL             Reasoning effort: none, low, medium, high, xhigh, max
+                                 Omit to use the model/API default.
+  -r, --raw                      Print the complete API JSON where supported
   -h, --help                     Show help
   -v, --version                  Show version
+
 Paid fallback:
   Complimentary quota is tried first. If it cannot fit the request, run may use the
-  local annual paid budget (default $5). Set OPENAI_ANNUAL_PAID_BUDGET_USD=0 to disable.
+  annual paid budget (default $5). Organization Costs is the authoritative spend floor,
+  so direct API usage outside OpenAIQuotaFuse is included after OpenAI reports it.
+  A conservative local guard also counts recent QuotaFuse paid requests to cover
+  Costs API reporting delay. Set OPENAI_ANNUAL_PAID_BUDGET_USD=0 to disable fallback.
 USAGE
 }
 
-need_command(){ command -v "$1" >/dev/null 2>&1 || { echo "error: required command not found: $1" >&2; exit 2; }; }
-trim_quotes(){ local v="$1"; [[ "$v" == \"*\" && "$v" == *\" ]] && v="${v:1:${#v}-2}"; [[ "$v" == \'*\' && "$v" == *\' ]] && v="${v:1:${#v}-2}"; printf '%s' "$v"; }
-load_env_key(){ local f="$1" k="$2" l v; [[ -f "$f" ]] || return 0; [[ -n "${!k:-}" ]] && return 0; l="$(grep -E "^[[:space:]]*(export[[:space:]]+)?${k}=" "$f" | tail -n1 || true)"; [[ -n "$l" ]] || return 0; l="${l#export }"; v="$(trim_quotes "${l#*=}")"; printf -v "$k" '%s' "$v"; export "$k"; }
-load_env_file(){ local f="${OPENAI_QUOTA_FUSE_ENV_FILE:-.env}" k; for k in OPENAI_ADMIN_KEY OPENAI_API_KEY OPENAI_USAGE_TIER OPENAI_QUOTA_RESERVE_PERCENT OPENAI_QUOTA_FUSE_MODELS_FILE OPENAI_QUOTA_FUSE_SELECTION_FILE OPENAI_ANNUAL_PAID_BUDGET_USD OPENAI_QUOTA_FUSE_PAID_LEDGER; do load_env_key "$f" "$k"; done; }
-models_file(){ printf '%s\n' "${OPENAI_QUOTA_FUSE_MODELS_FILE:-$DEFAULT_MODELS_FILE}"; }
-selection_file(){ printf '%s\n' "${OPENAI_QUOTA_FUSE_SELECTION_FILE:-$DEFAULT_SELECTION_FILE}"; }
-paid_ledger_file(){ if [[ -n "${OPENAI_QUOTA_FUSE_PAID_LEDGER:-}" ]]; then printf '%s\n' "$OPENAI_QUOTA_FUSE_PAID_LEDGER"; else printf '%s/openai-quota-fuse/paid-usage.json\n' "${XDG_STATE_HOME:-${HOME:-.}/.local/state}"; fi; }
-validate_registry(){ local f; f="$(models_file)"; [[ -r "$f" ]] || { echo "error: model registry not readable: $f" >&2; exit 2; }; jq -e '.schema_version == 1 and (.quota_groups|type=="object")' "$f" >/dev/null || { echo "error: invalid model registry: $f" >&2; exit 2; }; }
-validate_selection(){ local f; f="$(selection_file)"; [[ -r "$f" ]] || { echo "error: selection policy not readable: $f" >&2; exit 2; }; jq -e '.schema_version == 1 and (.quality_profiles|type=="object") and (.paid_fallback.pricing_usd_per_million_tokens|type=="object")' "$f" >/dev/null || { echo "error: invalid selection policy: $f" >&2; exit 2; }; }
-validate_config(){ [[ -n "${OPENAI_ADMIN_KEY:-}" ]] || { echo 'error: OPENAI_ADMIN_KEY is not set (environment or .env)' >&2; exit 2; }; OPENAI_USAGE_TIER="${OPENAI_USAGE_TIER:-1}"; OPENAI_QUOTA_RESERVE_PERCENT="${OPENAI_QUOTA_RESERVE_PERCENT:-5}"; [[ "$OPENAI_USAGE_TIER" =~ ^[1-5]$ ]] || { echo 'error: OPENAI_USAGE_TIER must be 1..5' >&2; exit 2; }; [[ "$OPENAI_QUOTA_RESERVE_PERCENT" =~ ^([0-9]|[1-9][0-9]|100)$ ]] || { echo 'error: OPENAI_QUOTA_RESERVE_PERCENT must be 0..100' >&2; exit 2; }; validate_registry; }
-validate_run_config(){ validate_config; validate_selection; [[ -n "${OPENAI_API_KEY:-}" ]] || { echo 'error: OPENAI_API_KEY is not set (environment or .env)' >&2; exit 2; }; OPENAI_ANNUAL_PAID_BUDGET_USD="${OPENAI_ANNUAL_PAID_BUDGET_USD:-$(jq -r '.paid_fallback.default_annual_budget_usd' "$(selection_file)")}"; jq -en --arg v "$OPENAI_ANNUAL_PAID_BUDGET_USD" '$v|tonumber|.>=0' >/dev/null || { echo 'error: OPENAI_ANNUAL_PAID_BUDGET_USD must be a non-negative number' >&2; exit 2; }; }
-quota_for_group(){ local g="$1" k; (( OPENAI_USAGE_TIER <= 2 )) && k=tier_1_2 || k=tier_3_5; jq -er --arg g "$g" --arg k "$k" '.quota_groups[$g].daily_token_limits[$k]' "$(models_file)"; }
-model_group(){ jq -er --arg m "$1" '.quota_groups|to_entries[]|select(.value.models|index($m))|.key' "$(models_file)" | head -n1; }
-utc_day_start_epoch(){ if date -u -j -f '%Y-%m-%d %H:%M:%S' "$(date -u '+%Y-%m-%d') 00:00:00" '+%s' >/dev/null 2>&1; then date -u -j -f '%Y-%m-%d %H:%M:%S' "$(date -u '+%Y-%m-%d') 00:00:00" '+%s'; else date -u -d "$(date -u '+%Y-%m-%d') 00:00:00" '+%s'; fi; }
-fetch_usage(){ curl --fail-with-body --silent --show-error --get "$USAGE_URL" -H "Authorization: Bearer $OPENAI_ADMIN_KEY" -H 'Content-Type: application/json' --data-urlencode "start_time=$1" --data-urlencode bucket_width=1d --data-urlencode limit=1 --data-urlencode group_by=model --data-urlencode group_by=service_tier; }
-summarize_usage(){ jq -r --slurpfile registry "$(models_file)" '($registry[0].quota_groups) as $gs|reduce(.data[].results[]? // empty) as $r ({};($r.model//"") as $m|([$gs|to_entries[]|select(.value.models|index($m))|.key][0]//null) as $g|if $g==null then . else .[$g]=((.[$g]//0)+(($r.input_tokens//0)+($r.output_tokens//0))) end)|reduce($gs|keys[]) as $g (.;.[$g]=(.[$g]//0))' <<<"$1"; }
-available_for_group(){ local q r a; q="$(quota_for_group "$1")"; r=$((q*OPENAI_QUOTA_RESERVE_PERCENT/100)); a=$((q-$2-r)); ((a<0))&&a=0; printf '%s\n' "$a"; }
-print_status(){ local raw s g u q a; raw="$(fetch_usage "$(utc_day_start_epoch)")"; [[ "${1:-}" =~ ^(--raw|-r)$ ]] && { jq . <<<"$raw"; return; }; s="$(summarize_usage "$raw")"; printf 'OpenAIQuotaFuse status (UTC day)\n'; while IFS= read -r g; do u="$(jq -r --arg g "$g" '.[$g]' <<<"$s")"; q="$(quota_for_group "$g")"; a="$(available_for_group "$g" "$u")"; printf '%s used=%s quota=%s available=%s\n' "$g" "$u" "$q" "$a"; done < <(jq -r '.quota_groups|keys[]' "$(models_file)"); }
-check_model(){ local g raw s u a; [[ "$2" =~ ^[0-9]+$ ]] || exit 2; g="$(model_group "$1")" || { echo "error: model is not in models.json: $1" >&2; return 3; }; raw="$(fetch_usage "$(utc_day_start_epoch)")"; s="$(summarize_usage "$raw")"; u="$(jq -r --arg g "$g" '.[$g]' <<<"$s")"; a="$(available_for_group "$g" "$u")"; (( $2 <= a )) && { printf 'ALLOW %s group=%s requested=%d available=%d\n' "$1" "$g" "$2" "$a"; return 0; }; printf 'BLOCK %s group=%s requested=%d available=%d\n' "$1" "$g" "$2" "$a"; return 4; }
-selection_candidates(){ local q="$1" f; f="$(selection_file)"; [[ -n "$q" ]] || q="$(jq -r '.default_quality' "$f")"; jq -er --arg q "$q" '.quality_profiles[$q][]' "$f" 2>/dev/null || { echo "error: unknown quality profile: $q" >&2; return 2; }; }
-paid_candidates(){ local q="$1" f; f="$(selection_file)"; [[ -n "$q" ]] || q="$(jq -r '.default_quality' "$f")"; jq -er --arg q "$q" '.paid_fallback.quality_profiles[$q][]' "$f" 2>/dev/null || { echo "error: unknown quality profile: $q" >&2; return 2; }; }
-select_model(){ local tokens="$1" quality="$2" raw s m g u a; shift 2; local c=(); if (($#==0)); then while IFS= read -r m; do c+=("$m"); done < <(selection_candidates "$quality"); set -- "${c[@]}"; fi; raw="$(fetch_usage "$(utc_day_start_epoch)")"; s="$(summarize_usage "$raw")"; for m in "$@"; do g="$(model_group "$m")" || continue; u="$(jq -r --arg g "$g" '.[$g]' <<<"$s")"; a="$(available_for_group "$g" "$u")"; ((tokens<=a)) && { printf '%s\n' "$m"; return; }; done; return 4; }
-count_input_tokens(){ local payload response count; payload="$(jq -n --arg model "$1" --arg input "$2" '{model:$model,input:$input}')"; response="$(curl --fail-with-body --silent --show-error "$INPUT_TOKENS_URL" -H "Authorization: Bearer $OPENAI_API_KEY" -H 'Content-Type: application/json' -d "$payload")" || return $?; count="$(jq -er '.input_tokens|select(type=="number" and .>=0)' <<<"$response")" || { echo 'error: invalid response from /responses/input_tokens' >&2; return 5; }; printf '%d\n' "$count"; }
-price_estimate(){ local model="$1" input="$2" output="$3" f; f="$(selection_file)"; jq -en --slurpfile p "$f" --arg m "$model" --argjson i "$input" --argjson o "$output" '($p[0].paid_fallback) as $p|($p.pricing_usd_per_million_tokens[$m] // error("no paid pricing")) as $r|if $i > $p.long_context_threshold_input_tokens then (($i*$r.input*$p.long_context_input_multiplier)+($o*$r.output*$p.long_context_output_multiplier))/1000000 else (($i*$r.input)+($o*$r.output))/1000000 end'; }
-paid_spent(){ local f year; f="$(paid_ledger_file)"; year="$(date -u '+%Y')"; [[ -f "$f" ]] || { printf '0\n'; return; }; jq -r --arg y "$year" '[.events[]? | select(.year==$y) | .usd] | add // 0' "$f"; }
-paid_lock_acquire(){ local lock="$(paid_ledger_file).lock" n=0; mkdir -p "$(dirname "$(paid_ledger_file)")"; while ! mkdir "$lock" 2>/dev/null; do ((n+=1)); ((n<100)) || { echo 'error: timed out waiting for paid-budget ledger lock' >&2; return 6; }; sleep 0.05; done; }
-paid_lock_release(){ rmdir "$(paid_ledger_file).lock" 2>/dev/null || true; }
-record_paid_event(){ local usd="$1" model="$2" kind="$3" f tmp year ts; f="$(paid_ledger_file)"; mkdir -p "$(dirname "$f")"; year="$(date -u '+%Y')"; ts="$(date -u '+%Y-%m-%dT%H:%M:%SZ')"; tmp="$f.tmp.$$"; if [[ -f "$f" ]]; then jq --arg y "$year" --arg ts "$ts" --arg m "$model" --arg k "$kind" --argjson usd "$usd" '.events += [{year:$y,timestamp:$ts,model:$m,kind:$k,usd:$usd}]' "$f" >"$tmp"; else jq -n --arg y "$year" --arg ts "$ts" --arg m "$model" --arg k "$kind" --argjson usd "$usd" '{schema_version:1,events:[{year:$y,timestamp:$ts,model:$m,kind:$k,usd:$usd}]}' >"$tmp"; fi; mv "$tmp" "$f"; }
-budget_allows(){ local estimate="$1" spent cap; spent="$(paid_spent)"; cap="$OPENAI_ANNUAL_PAID_BUDGET_USD"; jq -en --argjson s "$spent" --argjson e "$estimate" --argjson c "$cap" '$s+$e <= $c'; }
-execute_response(){ local model="$1" prompt="$2" max="$3" raw="$4" response; local payload; payload="$(jq -n --arg model "$model" --arg input "$prompt" --argjson max "$max" '{model:$model,input:$input,max_output_tokens:$max}')"; response="$(curl --fail-with-body --silent --show-error "$RESPONSES_URL" -H "Authorization: Bearer $OPENAI_API_KEY" -H 'Content-Type: application/json' -d "$payload")" || return $?; printf 'usage: input=%s output=%s total=%s\n' "$(jq -r '.usage.input_tokens//"?"'<<<"$response")" "$(jq -r '.usage.output_tokens//"?"'<<<"$response")" "$(jq -r '.usage.total_tokens//"?"'<<<"$response")" >&2; if [[ "$raw" == 1 ]]; then jq . <<<"$response"; else jq -r '[.output[]?|select(.type=="message")|.content[]?|select(.type=="output_text")|.text]|join("\n")' <<<"$response"; fi; printf '%s' "$response" >"${OPENAI_QUOTA_FUSE_LAST_RESPONSE_FILE:-/dev/null}"; }
-run_paid(){ local prompt="$1" quality="$2" explicit="$3" max="$4" raw="$5" model input estimate spent actual_in actual_out actual_cost response payload adjustment; paid_lock_acquire || return $?; trap 'paid_lock_release' RETURN; if [[ -n "$explicit" ]]; then model="$explicit"; price_estimate "$model" 0 0 >/dev/null 2>&1 || { echo "error: no paid pricing configured for explicit model: $model" >&2; return 4; }; else model="$(paid_candidates "$quality" | head -n1)"; fi; input="$(count_input_tokens "$model" "$prompt")" || return $?; estimate="$(price_estimate "$model" "$input" "$max")" || { echo "error: no paid pricing configured for model: $model" >&2; return 4; }; if ! budget_allows "$estimate"; then spent="$(paid_spent)"; printf 'error: paid fallback blocked: annual cap $%s, spent $%s, request reserve $%s\n' "$OPENAI_ANNUAL_PAID_BUDGET_USD" "$spent" "$estimate" >&2; return 4; fi; record_paid_event "$estimate" "$model" reservation; printf 'quota: complimentary exhausted; paid fallback reserved $%s\nmodel: %s\n\n' "$estimate" "$model" >&2; payload="$(jq -n --arg model "$model" --arg input "$prompt" --argjson max "$max" '{model:$model,input:$input,max_output_tokens:$max}')"; if ! response="$(curl --fail-with-body --silent --show-error "$RESPONSES_URL" -H "Authorization: Bearer $OPENAI_API_KEY" -H 'Content-Type: application/json' -d "$payload")"; then echo 'warning: paid reservation retained because inference outcome is unknown' >&2; return 1; fi; actual_in="$(jq -r '.usage.input_tokens//0' <<<"$response")"; actual_out="$(jq -r '.usage.output_tokens//0' <<<"$response")"; actual_cost="$(price_estimate "$model" "$actual_in" "$actual_out")"; adjustment="$(jq -n --argjson a "$actual_cost" --argjson e "$estimate" '$a-$e')"; record_paid_event "$adjustment" "$model" reconciliation; printf 'usage: input=%s output=%s total=%s paid=$%s annual_spent=$%s\n' "$actual_in" "$actual_out" "$(jq -r '.usage.total_tokens//"?"'<<<"$response")" "$actual_cost" "$(paid_spent)" >&2; if [[ "$raw" == 1 ]]; then jq . <<<"$response"; else jq -r '[.output[]?|select(.type=="message")|.content[]?|select(.type=="output_text")|.text]|join("\n")' <<<"$response"; fi; }
-run_prompt(){ local prompt="$1" quality="$2" explicit="$3" max="$4" raw="$5" first model input required; [[ "$max" =~ ^[1-9][0-9]*$ ]] || { echo 'error: max output tokens must be a positive integer' >&2; return 2; }; if [[ -n "$explicit" ]]; then first="$explicit"; else first="$(selection_candidates "$quality"|head -n1)"; fi; input="$(count_input_tokens "$first" "$prompt")" || return $?; required=$((input+max)); if [[ -n "$explicit" ]]; then if check_model "$first" "$required" >/dev/null; then model="$first"; else run_paid "$prompt" "$quality" "$explicit" "$max" "$raw"; return $?; fi; else if model="$(select_model "$required" "$quality")"; then if [[ "$model" != "$first" ]]; then input="$(count_input_tokens "$model" "$prompt")" || return $?; required=$((input+max)); check_model "$model" "$required" >/dev/null || { run_paid "$prompt" "$quality" "" "$max" "$raw"; return $?; }; fi; else run_paid "$prompt" "$quality" "" "$max" "$raw"; return $?; fi; fi; printf 'quota: OK (input=%d + max_output=%d => reserve=%d tokens)\nmodel: %s\n\n' "$input" "$max" "$required" "$model" >&2; execute_response "$model" "$prompt" "$max" "$raw"; }
-print_models(){ jq -r '.quota_groups|to_entries[]|"\(.key): \(.value.models|join(", "))"' "$(models_file)"; validate_selection; printf 'Default quality: %s\n' "$(jq -r '.default_quality' "$(selection_file)")"; printf 'Paid fallback low: %s\n' "$(jq -r '.paid_fallback.quality_profiles.low|join(" -> ")' "$(selection_file)")"; }
-parse_check(){ local m="" t=""; if [[ $# -eq 2 && "$1" != -* ]]; then check_model "$1" "$2"; return; fi; while (($#)); do case "$1" in -m|--model)m="${2:?missing model}";shift 2;;-t|--estimated-tokens)t="${2:?missing tokens}";shift 2;;*)usage >&2;exit 2;;esac; done; [[ -n "$m" && -n "$t" ]]||exit 2; check_model "$m" "$t"; }
-parse_select(){ local t="" q=""; local ms=(); if (($#>=1))&&[[ "$1" != -* ]]; then t="$1";shift;select_model "$t" "" "$@" || { echo 'error: no candidate model has enough complimentary quota' >&2; return 4; };return;fi; while (($#));do case "$1" in -t|--estimated-tokens)t="${2:?missing tokens}";shift 2;;-q|--quality)q="${2:?missing quality}";shift 2;;-m|--model)ms+=("${2:?missing model}");shift 2;;*)exit 2;;esac;done;[[ -n "$t" ]]||exit 2;select_model "$t" "$q" "${ms[@]}" || { echo 'error: no candidate model has enough complimentary quota' >&2; return 4; }; }
-parse_run(){ local q="" m="" o=1024 raw=0 input="" input_set=0; local p=(); while (($#));do case "$1" in -q|--quality)q="${2:?missing quality}";shift 2;;-m|--model)m="${2:?missing model}";shift 2;;-o|--max-output-tokens)o="${2:?missing max output}";shift 2;;-i|--input)input="${2:?missing input}";input_set=1;shift 2;;-r|--raw)raw=1;shift;;--)shift;p+=("$@");break;;-*)echo "error: unknown run option: $1" >&2;exit 2;;*)p+=("$1");shift;;esac;done; if ((input_set)) && ((${#p[@]})); then echo 'error: use either --input or positional prompt, not both' >&2; exit 2; fi; if ((input_set)); then [[ "$input" == - ]] && input="$(cat)"; elif ((${#p[@]})); then input="${p[*]}"; elif [[ ! -t 0 ]]; then input="$(cat)"; else echo 'error: run requires --input, a positional prompt, or stdin' >&2; exit 2; fi; [[ -n "$input" ]] || { echo 'error: run input is empty' >&2; exit 2; }; run_prompt "$input" "$q" "$m" "$o" "$raw"; }
-main(){ need_command curl;need_command jq;load_env_file;case "${1:-}" in run)validate_run_config;shift;parse_run "$@";;status)validate_config;shift;print_status "${1:-}";;check)validate_config;shift;parse_check "$@";;select)validate_config;validate_selection;shift;parse_select "$@";;models)validate_registry;print_models;;version|--version|-v)printf '%s\n' "$VERSION";;help|--help|-h|'')usage;;*)usage >&2;exit 2;;esac; }
+need_command() {
+  command -v "$1" >/dev/null 2>&1 || {
+    echo "error: required command not found: $1" >&2
+    exit 2
+  }
+}
+
+trim_quotes() {
+  local v="$1"
+  [[ "$v" == \"*\" && "$v" == *\" ]] && v="${v:1:${#v}-2}"
+  [[ "$v" == \'*\' && "$v" == *\' ]] && v="${v:1:${#v}-2}"
+  printf '%s' "$v"
+}
+
+load_env_key() {
+  local f="$1" k="$2" l v
+  [[ -f "$f" ]] || return 0
+  [[ -n "${!k:-}" ]] && return 0
+  l="$(grep -E "^[[:space:]]*(export[[:space:]]+)?${k}=" "$f" | tail -n1 || true)"
+  [[ -n "$l" ]] || return 0
+  l="${l#export }"
+  v="$(trim_quotes "${l#*=}")"
+  printf -v "$k" '%s' "$v"
+  export "$k"
+}
+
+load_env_file() {
+  local f="${OPENAI_QUOTA_FUSE_ENV_FILE:-.env}" k
+  for k in \
+    OPENAI_ADMIN_KEY \
+    OPENAI_API_KEY \
+    OPENAI_USAGE_TIER \
+    OPENAI_QUOTA_RESERVE_PERCENT \
+    OPENAI_QUOTA_FUSE_MODELS_FILE \
+    OPENAI_QUOTA_FUSE_SELECTION_FILE \
+    OPENAI_ANNUAL_PAID_BUDGET_USD \
+    OPENAI_QUOTA_FUSE_PAID_LEDGER
+  do
+    load_env_key "$f" "$k"
+  done
+}
+
+models_file() {
+  printf '%s\n' "${OPENAI_QUOTA_FUSE_MODELS_FILE:-$DEFAULT_MODELS_FILE}"
+}
+
+selection_file() {
+  printf '%s\n' "${OPENAI_QUOTA_FUSE_SELECTION_FILE:-$DEFAULT_SELECTION_FILE}"
+}
+
+paid_ledger_file() {
+  if [[ -n "${OPENAI_QUOTA_FUSE_PAID_LEDGER:-}" ]]; then
+    printf '%s\n' "$OPENAI_QUOTA_FUSE_PAID_LEDGER"
+  else
+    printf '%s/openai-quota-fuse/paid-usage.json\n' "${XDG_STATE_HOME:-${HOME:-.}/.local/state}"
+  fi
+}
+
+validate_registry() {
+  local f
+  f="$(models_file)"
+  [[ -r "$f" ]] || { echo "error: model registry not readable: $f" >&2; exit 2; }
+  jq -e '.schema_version == 1 and (.quota_groups|type=="object")' "$f" >/dev/null ||
+    { echo "error: invalid model registry: $f" >&2; exit 2; }
+}
+
+validate_selection() {
+  local f
+  f="$(selection_file)"
+  [[ -r "$f" ]] || { echo "error: selection policy not readable: $f" >&2; exit 2; }
+  jq -e '.schema_version == 1 and (.quality_profiles|type=="object") and (.paid_fallback.pricing_usd_per_million_tokens|type=="object")' "$f" >/dev/null ||
+    { echo "error: invalid selection policy: $f" >&2; exit 2; }
+}
+
+validate_config() {
+  [[ -n "${OPENAI_ADMIN_KEY:-}" ]] ||
+    { echo 'error: OPENAI_ADMIN_KEY is not set (environment or .env)' >&2; exit 2; }
+
+  OPENAI_USAGE_TIER="${OPENAI_USAGE_TIER:-1}"
+  OPENAI_QUOTA_RESERVE_PERCENT="${OPENAI_QUOTA_RESERVE_PERCENT:-5}"
+
+  [[ "$OPENAI_USAGE_TIER" =~ ^[1-5]$ ]] ||
+    { echo 'error: OPENAI_USAGE_TIER must be 1..5' >&2; exit 2; }
+  [[ "$OPENAI_QUOTA_RESERVE_PERCENT" =~ ^([0-9]|[1-9][0-9]|100)$ ]] ||
+    { echo 'error: OPENAI_QUOTA_RESERVE_PERCENT must be 0..100' >&2; exit 2; }
+
+  validate_registry
+}
+
+validate_run_config() {
+  validate_config
+  validate_selection
+  [[ -n "${OPENAI_API_KEY:-}" ]] ||
+    { echo 'error: OPENAI_API_KEY is not set (environment or .env)' >&2; exit 2; }
+
+  OPENAI_ANNUAL_PAID_BUDGET_USD="${OPENAI_ANNUAL_PAID_BUDGET_USD:-$(jq -r '.paid_fallback.default_annual_budget_usd' "$(selection_file)")}"
+  jq -en --arg v "$OPENAI_ANNUAL_PAID_BUDGET_USD" '$v|tonumber|.>=0' >/dev/null ||
+    { echo 'error: OPENAI_ANNUAL_PAID_BUDGET_USD must be a non-negative number' >&2; exit 2; }
+}
+
+validate_effort() {
+  local effort="$1"
+  [[ -z "$effort" ]] && return 0
+  case "$effort" in
+    none|low|medium|high|xhigh|max) return 0 ;;
+    *)
+      echo 'error: effort must be one of: none, low, medium, high, xhigh, max' >&2
+      return 2
+      ;;
+  esac
+}
+
+quota_for_group() {
+  local g="$1" k
+  (( OPENAI_USAGE_TIER <= 2 )) && k=tier_1_2 || k=tier_3_5
+  jq -er --arg g "$g" --arg k "$k" '.quota_groups[$g].daily_token_limits[$k]' "$(models_file)"
+}
+
+model_group() {
+  jq -er --arg m "$1" '.quota_groups|to_entries[]|select(.value.models|index($m))|.key' "$(models_file)" | head -n1
+}
+
+utc_day_start_epoch() {
+  if date -u -j -f '%Y-%m-%d %H:%M:%S' "$(date -u '+%Y-%m-%d') 00:00:00" '+%s' >/dev/null 2>&1; then
+    date -u -j -f '%Y-%m-%d %H:%M:%S' "$(date -u '+%Y-%m-%d') 00:00:00" '+%s'
+  else
+    date -u -d "$(date -u '+%Y-%m-%d') 00:00:00" '+%s'
+  fi
+}
+
+utc_year_start_epoch() {
+  if date -u -j -f '%Y-%m-%d %H:%M:%S' "$(date -u '+%Y')-01-01 00:00:00" '+%s' >/dev/null 2>&1; then
+    date -u -j -f '%Y-%m-%d %H:%M:%S' "$(date -u '+%Y')-01-01 00:00:00" '+%s'
+  else
+    date -u -d "$(date -u '+%Y')-01-01 00:00:00" '+%s'
+  fi
+}
+
+now_epoch() {
+  date -u '+%s'
+}
+
+fetch_usage() {
+  curl --fail-with-body --silent --show-error --get "$USAGE_URL" \
+    -H "Authorization: Bearer $OPENAI_ADMIN_KEY" \
+    -H 'Content-Type: application/json' \
+    --data-urlencode "start_time=$1" \
+    --data-urlencode bucket_width=1d \
+    --data-urlencode limit=1 \
+    --data-urlencode group_by=model \
+    --data-urlencode group_by=service_tier
+}
+
+summarize_usage() {
+  jq -r --slurpfile registry "$(models_file)" '
+    ($registry[0].quota_groups) as $gs
+    | reduce (.data[].results[]? // empty) as $r ({};
+        ($r.model//"") as $m
+        | ([$gs|to_entries[]|select(.value.models|index($m))|.key][0]//null) as $g
+        | if $g==null then .
+          else .[$g]=((.[$g]//0)+(($r.input_tokens//0)+($r.output_tokens//0)))
+          end)
+    | reduce ($gs|keys[]) as $g (.; .[$g]=(.[$g]//0))
+  ' <<<"$1"
+}
+
+available_for_group() {
+  local q r a
+  q="$(quota_for_group "$1")"
+  r=$((q * OPENAI_QUOTA_RESERVE_PERCENT / 100))
+  a=$((q - $2 - r))
+  ((a < 0)) && a=0
+  printf '%s\n' "$a"
+}
+
+print_status() {
+  local raw s g u q a
+  raw="$(fetch_usage "$(utc_day_start_epoch)")"
+  [[ "${1:-}" =~ ^(--raw|-r)$ ]] && { jq . <<<"$raw"; return; }
+  s="$(summarize_usage "$raw")"
+  printf 'OpenAIQuotaFuse status (UTC day)\n'
+  while IFS= read -r g; do
+    u="$(jq -r --arg g "$g" '.[$g]' <<<"$s")"
+    q="$(quota_for_group "$g")"
+    a="$(available_for_group "$g" "$u")"
+    printf '%s used=%s quota=%s available=%s\n' "$g" "$u" "$q" "$a"
+  done < <(jq -r '.quota_groups|keys[]' "$(models_file)")
+}
+
+check_model() {
+  local g raw s u a
+  [[ "$2" =~ ^[0-9]+$ ]] || return 2
+  g="$(model_group "$1")" ||
+    { echo "error: model is not in models.json: $1" >&2; return 3; }
+  raw="$(fetch_usage "$(utc_day_start_epoch)")"
+  s="$(summarize_usage "$raw")"
+  u="$(jq -r --arg g "$g" '.[$g]' <<<"$s")"
+  a="$(available_for_group "$g" "$u")"
+  if (( $2 <= a )); then
+    printf 'ALLOW %s group=%s requested=%d available=%d\n' "$1" "$g" "$2" "$a"
+    return 0
+  fi
+  printf 'BLOCK %s group=%s requested=%d available=%d\n' "$1" "$g" "$2" "$a"
+  return 4
+}
+
+selection_candidates() {
+  local q="$1" f
+  f="$(selection_file)"
+  [[ -n "$q" ]] || q="$(jq -r '.default_quality' "$f")"
+  jq -er --arg q "$q" '.quality_profiles[$q][]' "$f" 2>/dev/null ||
+    { echo "error: unknown quality profile: $q" >&2; return 2; }
+}
+
+paid_candidates() {
+  local q="$1" f
+  f="$(selection_file)"
+  [[ -n "$q" ]] || q="$(jq -r '.default_quality' "$f")"
+  jq -er --arg q "$q" '.paid_fallback.quality_profiles[$q][]' "$f" 2>/dev/null ||
+    { echo "error: unknown quality profile: $q" >&2; return 2; }
+}
+
+select_model() {
+  local tokens="$1" quality="$2" raw s m g u a
+  shift 2
+  local c=()
+  if (($# == 0)); then
+    while IFS= read -r m; do c+=("$m"); done < <(selection_candidates "$quality")
+    set -- "${c[@]}"
+  fi
+  raw="$(fetch_usage "$(utc_day_start_epoch)")"
+  s="$(summarize_usage "$raw")"
+  for m in "$@"; do
+    g="$(model_group "$m")" || continue
+    u="$(jq -r --arg g "$g" '.[$g]' <<<"$s")"
+    a="$(available_for_group "$g" "$u")"
+    ((tokens <= a)) && { printf '%s\n' "$m"; return; }
+  done
+  return 4
+}
+
+request_payload() {
+  local model="$1" prompt="$2" max="$3" effort="$4"
+  if [[ -n "$effort" ]]; then
+    jq -n --arg model "$model" --arg input "$prompt" --argjson max "$max" --arg effort "$effort" \
+      '{model:$model,input:$input,max_output_tokens:$max,reasoning:{effort:$effort}}'
+  else
+    jq -n --arg model "$model" --arg input "$prompt" --argjson max "$max" \
+      '{model:$model,input:$input,max_output_tokens:$max}'
+  fi
+}
+
+count_input_tokens() {
+  local payload response count
+  payload="$(jq -n --arg model "$1" --arg input "$2" '{model:$model,input:$input}')"
+  response="$(curl --fail-with-body --silent --show-error "$INPUT_TOKENS_URL" \
+    -H "Authorization: Bearer $OPENAI_API_KEY" \
+    -H 'Content-Type: application/json' \
+    -d "$payload")" || return $?
+  count="$(jq -er '.input_tokens|select(type=="number" and .>=0)' <<<"$response")" ||
+    { echo 'error: invalid response from /responses/input_tokens' >&2; return 5; }
+  printf '%d\n' "$count"
+}
+
+price_estimate() {
+  local model="$1" input="$2" output="$3" f
+  f="$(selection_file)"
+  jq -en --slurpfile p "$f" --arg m "$model" --argjson i "$input" --argjson o "$output" '
+    ($p[0].paid_fallback) as $p
+    | ($p.pricing_usd_per_million_tokens[$m] // error("no paid pricing")) as $r
+    | if $i > $p.long_context_threshold_input_tokens
+      then (($i*$r.input*$p.long_context_input_multiplier)+($o*$r.output*$p.long_context_output_multiplier))/1000000
+      else (($i*$r.input)+($o*$r.output))/1000000
+      end
+  '
+}
+
+fetch_costs_page() {
+  local start="$1" page="${2:-}"
+  local args=(
+    --fail-with-body --silent --show-error --get "$COSTS_URL"
+    -H "Authorization: Bearer $OPENAI_ADMIN_KEY"
+    -H 'Content-Type: application/json'
+    --data-urlencode "start_time=$start"
+    --data-urlencode bucket_width=1d
+    --data-urlencode limit=180
+  )
+  [[ -n "$page" ]] && args+=(--data-urlencode "page=$page")
+  curl "${args[@]}"
+}
+
+official_costs_spent() {
+  local start page="" response subtotal total=0
+  start="$(utc_year_start_epoch)"
+  while :; do
+    response="$(fetch_costs_page "$start" "$page")" || return $?
+    jq -e '[.data[].results[]? | .amount.currency] | all(. == "usd")' <<<"$response" >/dev/null ||
+      { echo 'error: Costs API returned a non-USD amount' >&2; return 5; }
+    subtotal="$(jq '[.data[].results[]? | .amount.value] | add // 0' <<<"$response")"
+    total="$(jq -n --argjson a "$total" --argjson b "$subtotal" '$a+$b')"
+    if [[ "$(jq -r '.has_more // false' <<<"$response")" != "true" ]]; then
+      break
+    fi
+    page="$(jq -er '.next_page | select(type=="string" and length>0)' <<<"$response")" ||
+      { echo 'error: Costs API pagination missing next_page' >&2; return 5; }
+  done
+  printf '%s\n' "$total"
+}
+
+local_guard_spent() {
+  local f now cutoff year
+  f="$(paid_ledger_file)"
+  [[ -f "$f" ]] || { printf '0\n'; return; }
+  now="$(now_epoch)"
+  cutoff=$((now - LOCAL_COST_GUARD_SECONDS))
+  year="$(date -u '+%Y')"
+  jq -r --arg y "$year" --argjson cutoff "$cutoff" '
+    if (.schema_version // 1) >= 2 then
+      [.requests[]?
+       | select(.year == $y)
+       | select((.state == "unknown") or ((.created_epoch // 0) >= $cutoff))
+       | if .state == "completed" then (.actual_usd // .reserved_usd // 0)
+         else (.reserved_usd // 0)
+         end] | add // 0
+    else
+      [.events[]? | select(.year==$y) | .usd] | add // 0
+    end
+  ' "$f"
+}
+
+effective_paid_spent() {
+  local official local_guard
+  official="$(official_costs_spent)" || return $?
+  local_guard="$(local_guard_spent)"
+  jq -n --argjson o "$official" --argjson l "$local_guard" '$o+$l'
+}
+
+print_costs() {
+  local raw="${1:-}" official guard effective
+  if [[ "$raw" =~ ^(--raw|-r)$ ]]; then
+    local start page="" response
+    start="$(utc_year_start_epoch)"
+    while :; do
+      response="$(fetch_costs_page "$start" "$page")" || return $?
+      jq . <<<"$response"
+      [[ "$(jq -r '.has_more // false' <<<"$response")" == "true" ]] || break
+      page="$(jq -er '.next_page' <<<"$response")"
+    done
+    return
+  fi
+  official="$(official_costs_spent)"
+  guard="$(local_guard_spent)"
+  effective="$(jq -n --argjson o "$official" --argjson l "$guard" '$o+$l')"
+  printf 'OpenAIQuotaFuse costs (UTC calendar year)\n'
+  printf 'official_costs_usd=%s\n' "$official"
+  printf 'local_recent_guard_usd=%s\n' "$guard"
+  printf 'effective_budget_spend_usd=%s\n' "$effective"
+  printf 'annual_cap_usd=%s\n' "${OPENAI_ANNUAL_PAID_BUDGET_USD:-$(jq -r '.paid_fallback.default_annual_budget_usd' "$(selection_file)")}"
+}
+
+paid_lock_acquire() {
+  local lock="$(paid_ledger_file).lock" n=0
+  mkdir -p "$(dirname "$(paid_ledger_file)")"
+  while ! mkdir "$lock" 2>/dev/null; do
+    ((n+=1))
+    ((n < 100)) || { echo 'error: timed out waiting for paid-budget ledger lock' >&2; return 6; }
+    sleep 0.05
+  done
+}
+
+paid_lock_release() {
+  rmdir "$(paid_ledger_file).lock" 2>/dev/null || true
+}
+
+new_request_id() {
+  printf '%s-%s-%s\n' "$(now_epoch)" "$$" "$RANDOM"
+}
+
+ensure_ledger_v2() {
+  local f tmp
+  f="$(paid_ledger_file)"
+  mkdir -p "$(dirname "$f")"
+  [[ -f "$f" ]] || {
+    jq -n '{schema_version:2,requests:[]}' >"$f"
+    return
+  }
+  if [[ "$(jq -r '.schema_version // 1' "$f")" == "2" ]]; then
+    return
+  fi
+  tmp="$f.tmp.$$"
+  jq '{schema_version:2,legacy_events:(.events // []),requests:[]}' "$f" >"$tmp"
+  mv "$tmp" "$f"
+}
+
+record_paid_reservation() {
+  local id="$1" usd="$2" model="$3" f tmp year ts epoch
+  ensure_ledger_v2
+  f="$(paid_ledger_file)"
+  tmp="$f.tmp.$$"
+  year="$(date -u '+%Y')"
+  ts="$(date -u '+%Y-%m-%dT%H:%M:%SZ')"
+  epoch="$(now_epoch)"
+  jq --arg id "$id" --arg y "$year" --arg ts "$ts" --arg m "$model" \
+     --argjson epoch "$epoch" --argjson usd "$usd" '
+       .requests += [{
+         id:$id, year:$y, timestamp:$ts, created_epoch:$epoch,
+         model:$m, state:"unknown", reserved_usd:$usd
+       }]
+     ' "$f" >"$tmp"
+  mv "$tmp" "$f"
+}
+
+complete_paid_reservation() {
+  local id="$1" actual="$2" f tmp
+  f="$(paid_ledger_file)"
+  tmp="$f.tmp.$$"
+  jq --arg id "$id" --argjson actual "$actual" '
+    .requests |= map(if .id==$id then .state="completed" | .actual_usd=$actual else . end)
+  ' "$f" >"$tmp"
+  mv "$tmp" "$f"
+}
+
+budget_allows() {
+  local estimate="$1" spent cap
+  spent="$(effective_paid_spent)" || return $?
+  cap="$OPENAI_ANNUAL_PAID_BUDGET_USD"
+  jq -en --argjson s "$spent" --argjson e "$estimate" --argjson c "$cap" '$s+$e <= $c'
+}
+
+execute_response() {
+  local model="$1" prompt="$2" max="$3" raw="$4" effort="$5"
+  local payload response
+  payload="$(request_payload "$model" "$prompt" "$max" "$effort")"
+  response="$(curl --fail-with-body --silent --show-error "$RESPONSES_URL" \
+    -H "Authorization: Bearer $OPENAI_API_KEY" \
+    -H 'Content-Type: application/json' \
+    -d "$payload")" || return $?
+  printf 'usage: input=%s output=%s total=%s\n' \
+    "$(jq -r '.usage.input_tokens//"?"' <<<"$response")" \
+    "$(jq -r '.usage.output_tokens//"?"' <<<"$response")" \
+    "$(jq -r '.usage.total_tokens//"?"' <<<"$response")" >&2
+  if [[ "$raw" == 1 ]]; then
+    jq . <<<"$response"
+  else
+    jq -r '[.output[]?|select(.type=="message")|.content[]?|select(.type=="output_text")|.text]|join("\n")' <<<"$response"
+  fi
+  printf '%s' "$response" >"${OPENAI_QUOTA_FUSE_LAST_RESPONSE_FILE:-/dev/null}"
+}
+
+run_paid() {
+  local prompt="$1" quality="$2" explicit="$3" max="$4" raw="$5" effort="$6"
+  local model input estimate spent actual_in actual_out actual_cost response payload request_id
+
+  paid_lock_acquire || return $?
+  trap 'paid_lock_release' RETURN
+
+  if [[ -n "$explicit" ]]; then
+    model="$explicit"
+    price_estimate "$model" 0 0 >/dev/null 2>&1 ||
+      { echo "error: no paid pricing configured for explicit model: $model" >&2; return 4; }
+  else
+    model="$(paid_candidates "$quality" | head -n1)"
+  fi
+
+  input="$(count_input_tokens "$model" "$prompt")" || return $?
+  estimate="$(price_estimate "$model" "$input" "$max")" ||
+    { echo "error: no paid pricing configured for model: $model" >&2; return 4; }
+
+  if ! budget_allows "$estimate"; then
+    spent="$(effective_paid_spent || printf '?')"
+    printf 'error: paid fallback blocked: annual cap $%s, effective spend $%s, request reserve $%s\n' \
+      "$OPENAI_ANNUAL_PAID_BUDGET_USD" "$spent" "$estimate" >&2
+    return 4
+  fi
+
+  request_id="$(new_request_id)"
+  record_paid_reservation "$request_id" "$estimate" "$model"
+  printf 'quota: complimentary exhausted; paid fallback reserved $%s\nmodel: %s\n' "$estimate" "$model" >&2
+  [[ -n "$effort" ]] && printf 'reasoning effort: %s\n' "$effort" >&2
+  printf '\n' >&2
+
+  payload="$(request_payload "$model" "$prompt" "$max" "$effort")"
+  if ! response="$(curl --fail-with-body --silent --show-error "$RESPONSES_URL" \
+      -H "Authorization: Bearer $OPENAI_API_KEY" \
+      -H 'Content-Type: application/json' \
+      -d "$payload")"; then
+    echo 'warning: paid reservation retained because inference outcome is unknown' >&2
+    return 1
+  fi
+
+  actual_in="$(jq -r '.usage.input_tokens//0' <<<"$response")"
+  actual_out="$(jq -r '.usage.output_tokens//0' <<<"$response")"
+  actual_cost="$(price_estimate "$model" "$actual_in" "$actual_out")"
+  complete_paid_reservation "$request_id" "$actual_cost"
+
+  printf 'usage: input=%s output=%s total=%s paid=$%s effective_annual_spend=$%s\n' \
+    "$actual_in" "$actual_out" "$(jq -r '.usage.total_tokens//"?"' <<<"$response")" \
+    "$actual_cost" "$(effective_paid_spent)" >&2
+
+  if [[ "$raw" == 1 ]]; then
+    jq . <<<"$response"
+  else
+    jq -r '[.output[]?|select(.type=="message")|.content[]?|select(.type=="output_text")|.text]|join("\n")' <<<"$response"
+  fi
+}
+
+run_prompt() {
+  local prompt="$1" quality="$2" explicit="$3" max="$4" raw="$5" effort="$6"
+  local first model input required
+
+  [[ "$max" =~ ^[1-9][0-9]*$ ]] ||
+    { echo 'error: max output tokens must be a positive integer' >&2; return 2; }
+  validate_effort "$effort" || return $?
+
+  if [[ -n "$explicit" ]]; then
+    first="$explicit"
+  else
+    first="$(selection_candidates "$quality" | head -n1)"
+  fi
+
+  input="$(count_input_tokens "$first" "$prompt")" || return $?
+  required=$((input + max))
+
+  if [[ -n "$explicit" ]]; then
+    if check_model "$first" "$required" >/dev/null; then
+      model="$first"
+    else
+      run_paid "$prompt" "$quality" "$explicit" "$max" "$raw" "$effort"
+      return $?
+    fi
+  else
+    if model="$(select_model "$required" "$quality")"; then
+      if [[ "$model" != "$first" ]]; then
+        input="$(count_input_tokens "$model" "$prompt")" || return $?
+        required=$((input + max))
+        check_model "$model" "$required" >/dev/null || {
+          run_paid "$prompt" "$quality" "" "$max" "$raw" "$effort"
+          return $?
+        }
+      fi
+    else
+      run_paid "$prompt" "$quality" "" "$max" "$raw" "$effort"
+      return $?
+    fi
+  fi
+
+  printf 'quota: OK (input=%d + max_output=%d => reserve=%d tokens)\nmodel: %s\n' \
+    "$input" "$max" "$required" "$model" >&2
+  [[ -n "$effort" ]] && printf 'reasoning effort: %s\n' "$effort" >&2
+  printf '\n' >&2
+  execute_response "$model" "$prompt" "$max" "$raw" "$effort"
+}
+
+print_models() {
+  jq -r '.quota_groups|to_entries[]|"\(.key): \(.value.models|join(", "))"' "$(models_file)"
+  validate_selection
+  printf 'Default quality: %s\n' "$(jq -r '.default_quality' "$(selection_file)")"
+  printf 'Paid fallback low: %s\n' "$(jq -r '.paid_fallback.quality_profiles.low|join(" -> ")' "$(selection_file)")"
+}
+
+parse_check() {
+  local m="" t=""
+  if [[ $# -eq 2 && "$1" != -* ]]; then
+    check_model "$1" "$2"
+    return
+  fi
+  while (($#)); do
+    case "$1" in
+      -m|--model) m="${2:?missing model}"; shift 2 ;;
+      -t|--estimated-tokens) t="${2:?missing tokens}"; shift 2 ;;
+      *) usage >&2; exit 2 ;;
+    esac
+  done
+  [[ -n "$m" && -n "$t" ]] || exit 2
+  check_model "$m" "$t"
+}
+
+parse_select() {
+  local t="" q=""
+  local ms=()
+  if (($# >= 1)) && [[ "$1" != -* ]]; then
+    t="$1"; shift
+    select_model "$t" "" "$@" ||
+      { echo 'error: no candidate model has enough complimentary quota' >&2; return 4; }
+    return
+  fi
+  while (($#)); do
+    case "$1" in
+      -t|--estimated-tokens) t="${2:?missing tokens}"; shift 2 ;;
+      -q|--quality) q="${2:?missing quality}"; shift 2 ;;
+      -m|--model) ms+=("${2:?missing model}"); shift 2 ;;
+      *) exit 2 ;;
+    esac
+  done
+  [[ -n "$t" ]] || exit 2
+  select_model "$t" "$q" "${ms[@]}" ||
+    { echo 'error: no candidate model has enough complimentary quota' >&2; return 4; }
+}
+
+parse_run() {
+  local q="" m="" e="" o=1024 raw=0 input="" input_set=0
+  local p=()
+  while (($#)); do
+    case "$1" in
+      -q|--quality) q="${2:?missing quality}"; shift 2 ;;
+      -e|--effort) e="${2:?missing effort}"; shift 2 ;;
+      -m|--model) m="${2:?missing model}"; shift 2 ;;
+      -o|--max-output-tokens) o="${2:?missing max output}"; shift 2 ;;
+      -i|--input) input="${2:?missing input}"; input_set=1; shift 2 ;;
+      -r|--raw) raw=1; shift ;;
+      --) shift; p+=("$@"); break ;;
+      -*) echo "error: unknown run option: $1" >&2; exit 2 ;;
+      *) p+=("$1"); shift ;;
+    esac
+  done
+
+  if ((input_set)) && ((${#p[@]})); then
+    echo 'error: use either --input or positional prompt, not both' >&2
+    exit 2
+  fi
+
+  if ((input_set)); then
+    [[ "$input" == - ]] && input="$(cat)"
+  elif ((${#p[@]})); then
+    input="${p[*]}"
+  elif [[ ! -t 0 ]]; then
+    input="$(cat)"
+  else
+    echo 'error: run requires --input, a positional prompt, or stdin' >&2
+    exit 2
+  fi
+
+  [[ -n "$input" ]] || { echo 'error: run input is empty' >&2; exit 2; }
+  run_prompt "$input" "$q" "$m" "$o" "$raw" "$e"
+}
+
+main() {
+  need_command curl
+  need_command jq
+  load_env_file
+
+  case "${1:-}" in
+    run)
+      validate_run_config
+      shift
+      parse_run "$@"
+      ;;
+    status)
+      validate_config
+      shift
+      print_status "${1:-}"
+      ;;
+    costs)
+      validate_config
+      validate_selection
+      OPENAI_ANNUAL_PAID_BUDGET_USD="${OPENAI_ANNUAL_PAID_BUDGET_USD:-$(jq -r '.paid_fallback.default_annual_budget_usd' "$(selection_file)")}"
+      shift
+      print_costs "${1:-}"
+      ;;
+    check)
+      validate_config
+      shift
+      parse_check "$@"
+      ;;
+    select)
+      validate_config
+      validate_selection
+      shift
+      parse_select "$@"
+      ;;
+    models)
+      validate_registry
+      print_models
+      ;;
+    version|--version|-v)
+      printf '%s\n' "$VERSION"
+      ;;
+    help|--help|-h|'')
+      usage
+      ;;
+    *)
+      usage >&2
+      exit 2
+      ;;
+  esac
+}
+
 main "$@"

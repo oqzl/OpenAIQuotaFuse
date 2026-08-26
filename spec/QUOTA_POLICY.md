@@ -2,7 +2,7 @@
 
 ## Goal
 
-OpenAIQuotaFuse normally keeps inference inside OpenAI's complimentary daily token quota for eligible data-sharing traffic. When no complimentary candidate can fit a request, an explicitly bounded local annual paid budget may be used. The intended default is `$5` per UTC calendar year.
+OpenAIQuotaFuse normally keeps inference inside OpenAI's complimentary daily token quota for eligible data-sharing traffic. When no complimentary candidate can fit a request, an explicitly bounded annual paid budget may be used. The intended default is `$5` per UTC calendar year.
 
 ## Complimentary reset boundary
 
@@ -10,7 +10,7 @@ The complimentary counter resets at 00:00 UTC every day.
 
 ## OpenAI policy data
 
-`models.json` is the broad accounting registry for eligible model IDs, shared quota groups, tier limits, source, and review date. `model-selection.json` contains the smaller curated automatic-selection policy, paid fallback order, and reviewed prices used for the local hard cap.
+`models.json` is the broad accounting registry for eligible model IDs, shared quota groups, tier limits, source, and review date. `model-selection.json` contains the smaller curated automatic-selection policy, paid fallback order, and reviewed prices used for request reservations.
 
 Runtime scraping of OpenAI documentation or Billing UI is not part of quota decisions. Current OpenAI primary documentation takes precedence when the checked-in snapshot is stale.
 
@@ -20,7 +20,7 @@ A request must reserve enough capacity for the whole request. For `run`, input t
 
 ## Conservative complimentary accounting
 
-The Shell implementation sums all completion usage for models registered in each quota group. This may understate remaining complimentary quota, but it avoids falsely claiming free capacity until incentive-specific Usage API behavior is validated.
+The Shell implementation sums all completion usage for models registered in each quota group. This includes usage generated outside OpenAIQuotaFuse when it appears in Organization Usage. This may understate remaining complimentary quota, but it avoids falsely claiming free capacity until incentive-specific Usage API behavior is validated.
 
 A configurable percentage of each daily quota is unavailable as a safety reserve. Default: 5%.
 
@@ -42,9 +42,18 @@ Explicit `high`:
 
 Complimentary ordering optimizes capability per shared quota token rather than API dollar price. Terra therefore precedes Luna while they share the same high-volume token pool.
 
+## Reasoning effort
+
+`run --effort/-e` maps directly to Responses API `reasoning.effort`. It is independent from `--quality/-q`:
+
+- `quality` selects the model preference order.
+- `effort` controls reasoning behavior inside the selected model.
+
+Supported values are `none`, `low`, `medium`, `high`, `xhigh`, and `max`. When omitted, OpenAIQuotaFuse omits `reasoning.effort` from the request so the current model/API default remains authoritative.
+
 ## Annual paid fallback
 
-Paid fallback is separate from complimentary quota and is attempted only after the complimentary path cannot fit the request. `OPENAI_ANNUAL_PAID_BUDGET_USD` controls the hard local cap; the default is `$5`, and `0` disables paid fallback.
+Paid fallback is separate from complimentary quota and is attempted only after the complimentary path cannot fit the request. `OPENAI_ANNUAL_PAID_BUDGET_USD` controls the hard application cap; the default is `$5`, and `0` disables paid fallback.
 
 Default paid `low` order is cost-aware:
 
@@ -58,19 +67,37 @@ Explicit `high` remains Sol-first:
     gpt-5.6-terra
     gpt-5.6-luna
 
-Before a paid inference, the implementation counts input tokens for the paid candidate and computes a worst-case dollar reservation using current checked-in input/output prices and `max_output_tokens`. Long-context price multipliers documented by OpenAI are included. A request is blocked if:
+Before a paid inference, the implementation counts input tokens for the paid candidate and computes a worst-case dollar reservation using current checked-in input/output prices and `max_output_tokens`. Long-context price multipliers documented by OpenAI are included.
 
-    year_to_date_local_spend + request_reservation > annual_cap
+### Organization Costs as the financial source of truth
 
-The reservation is persisted before inference. On a successful response, it is reconciled to actual `usage.input_tokens` and `usage.output_tokens`. If the inference outcome is unknown because the request fails after dispatch, the reservation remains charged locally; this intentionally fails safe rather than silently risking the annual cap.
+Year-to-date actual spend is read from the official `GET /v1/organization/costs` endpoint using the Organization Admin key. OpenAI documents the Costs endpoint as the appropriate financial view for spend that should reconcile to billing.
 
-The persistent ledger is local JSON, defaulting to:
+The Shell implementation starts at January 1 00:00 UTC, requests one-day buckets, follows `next_page`, and sums USD `amount.value` across the full UTC calendar year. Therefore API spend made through other scripts, applications, or direct `curl` calls contributes to the next paid-budget decision after OpenAI reports it in Organization Costs.
+
+The reported Organization Costs amount is the authoritative financial floor. OpenAIQuotaFuse does not attempt to infer which reported cost came from this CLI.
+
+### Reporting-delay guard
+
+A just-finished paid request may not yet appear in Organization Costs. To avoid opening a gap between local dispatch and financial reporting, OpenAIQuotaFuse keeps a local persistent guard for recent paid requests. Successful requests use actual response usage; requests whose inference outcome is unknown retain their worst-case reservation.
+
+The effective spend used for a new paid request is conservatively:
+
+    official_year_to_date_costs
+    + recent_local_paid_guard
+    + new_request_reservation
+
+A request is blocked when this exceeds the configured annual cap.
+
+Recent completed local requests are guarded for seven days. This can temporarily double-count spend once Costs has already incorporated the same request. That conservatism is intentional: avoiding an accidental paid overrun has priority over fully utilizing the annual budget. Unknown-outcome reservations remain guarded rather than silently disappearing.
+
+The local JSON ledger defaults to:
 
     ${XDG_STATE_HOME:-$HOME/.local/state}/openai-quota-fuse/paid-usage.json
 
-`OPENAI_QUOTA_FUSE_PAID_LEDGER` may override the path. Events are tagged with the UTC calendar year, so January 1 UTC starts a new annual budget without deleting historical records. A filesystem lock serializes paid reservations from concurrent local CLI processes sharing the ledger.
+`OPENAI_QUOTA_FUSE_PAID_LEDGER` may override the path. A filesystem lock serializes paid reservations from concurrent local CLI processes sharing the ledger.
 
-This ledger is the source of truth for the OpenAIQuotaFuse annual cap. It does not claim to equal OpenAI's billing ledger, which may include unrelated clients, delayed billing, credits, tool-call charges, or other products.
+`openai-quota-fuse.sh costs` exposes the official year-to-date Costs amount, the recent local guard, the effective budget spend, and the configured cap. `costs --raw/-r` prints the raw paginated Costs responses.
 
 ## Prepaid credits and expiry
 
@@ -80,13 +107,14 @@ No reliable documented runtime API for prepaid balance plus grant-level expiry m
 
 ## Responses API scope
 
-The Shell reference supports plain text input, model/quality selection, `max_output_tokens`, and raw response output. Tools, structured-output schemas, files/images, previous responses, and arbitrary Responses API fields are intentionally unsupported until their quota and paid-cost semantics are explicitly defined. The Shell reference is not a generic Responses API proxy.
+The Shell reference supports plain text input, model/quality selection, `reasoning.effort`, `max_output_tokens`, and raw response output. Tools, structured-output schemas, files/images, previous responses, and arbitrary Responses API fields are intentionally unsupported until their quota and paid-cost semantics are explicitly defined. The Shell reference is not a generic Responses API proxy.
 
 ## CLI option conventions
 
 Every long-form command-line option must have a short alias. Canonical options include:
 
     --quality, -q
+    --effort, -e
     --input, -i
     --model, -m
     --estimated-tokens, -t

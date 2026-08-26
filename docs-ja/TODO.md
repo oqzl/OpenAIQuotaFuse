@@ -15,7 +15,7 @@
 
 - [x] `run` を主たるユーザー向けコマンドとして追加する。
 - [x] `--input/-i`、`--input -`、非 TTY stdin、位置引数 prompt を扱う。
-- [x] 通常推論用 `OPENAI_API_KEY` と Organization Usage 用 `OPENAI_ADMIN_KEY` を分離する。
+- [x] 通常推論用 `OPENAI_API_KEY` と Organization Usage / Costs 用 `OPENAI_ADMIN_KEY` を分離する。
 - [x] Organization Owner が Admin key を作る場所と管理用途を文書化する。
 - [x] `POST /responses/input_tokens` で実 input token 数を取得する。
 - [x] `input_tokens + max_output_tokens` を推論前に予約する。
@@ -23,28 +23,32 @@
 - [x] quota/budget check 成功後にのみ Responses API を実行する。
 - [x] actual usage を stderr に表示する。
 - [x] `--max-output-tokens/-o`、`--model/-m`、`--raw/-r`、`--input/-i` を実装する。
-- [x] Shell P0 は plain text に限定し、tools / structured output / files/images / previous response / 任意 field は quota/cost semantics を定義するまで非対応とする。
+- [x] `--effort/-e` で Responses API の `reasoning.effort` を指定し、モデル選択の `--quality/-q` とは分離する。
+- [x] Shell P0 は plain text + model/quality/effort/max-output/raw に限定し、tools / structured output / files/images / previous response / 任意 field は quota/cost semantics を定義するまで非対応とする。
 
 ## P0 — 年間プリペイド予算
 
 - [x] 意図的な有料 fallback を日次無料 quota と別予算として扱う。
-- [x] 無料 quota を先に使い、収まらない場合だけ UTC 暦年のローカル年間予算を使う。既定 `$5`、今回の最悪ケース予約で上限を超えるなら BLOCK する。
+- [x] 無料 quota を先に使い、収まらない場合だけ UTC 暦年の年間予算を使う。既定 `$5`、今回の最悪ケース予約で上限を超えるなら BLOCK する。
 - [x] 年間上限を設定可能にし、`0` で有料 fallback を無効化する。
 - [x] current reviewed input/output 単価から事前見積し、actual usage 取得後に精算する。
 - [x] 有料候補順を無料 quota と分離し、通常 `low` は Luna → Terra → Sol、明示 `high` は Sol-first とする。
-- [x] 年間累計の正本は明示的なローカル永続 ledger とし、OpenAI billing state を推測しない。
-- [x] 年間リセット境界は 1月1日 00:00 UTC。reservation/reconciliation event を JSON に永続化する。
+- [x] 年初来の実支出の下限には公式 Organization Costs endpoint を使い、OpenAIQuotaFuse 外からの直接 API 利用も Costs 反映後は年間上限に含める。
+- [x] 1月1日 00:00 UTC から Costs API をページングし、UTC 暦年全体の USD amount を集計する。
+- [x] Costs 反映遅延に備え、直近の QuotaFuse 有料実行を local lag guard として保守的に加算する。結果不明の reservation は消さない。
+- [x] `costs` / `costs --raw` で official spend、local guard、effective spend、raw Costs page を確認できるようにする。
 - [x] credit の1年失効は年間上限とは別に扱う。
 - [x] Billing UI はスクレイピングしない。prepaid balance + grant expiry の信頼できる runtime API は現時点では利用しない。
 - [x] reliable な公式 expiry metadata が得られるまで burn-down policy は実装しない。
 - [x] 推論 dispatch 前に最悪ケース費用を ledger に予約し、結果不明時は予約を残すことで年間上限を安全側に守る。
-- [x] 複数 grant / expiry / billing 遅延 / negative balance はローカル年間上限を変更しない。両会計を意図的に独立させる。
 - [x] expiry を取得できない場合は推測しない。将来の明示設定は optional burn-down input としてのみ検討する。
 
 ## P1 — 会計ロジックの実環境検証
 
 - [x] Usage 0 の `status --raw` を実 Admin API key で検証し `results: []` を確認済み。
 - [ ] 実推論後の Usage API record を確認する。
+- [ ] 実 Admin API key で `costs` を検証し、sanitize した年初来 Costs response を記録する。
+- [ ] paid inference 後の Costs 反映遅延を観測し、現在の保守的な7日 local guard を縮められる根拠があるか確認する。
 - [ ] `service_tier` で incentive 対象を確実に識別できるか判断する。
 - [ ] 検証完了までは登録対象モデルの Usage をすべて消費として数える。
 - [ ] secret/organization identifier を除去したレスポンス例を記録する。
@@ -62,21 +66,23 @@
 - [ ] Usage API mock を含む Shell テストを拡充する。
 - [ ] UTC reset、tier、reserve、unknown model、quota 枯渇、candidate fallback を網羅する。
 - [ ] long/short alias と候補順をテストする。
-- [x] input-token counting、input/stdin/raw、actual usage diagnostics の mock test を追加する。
-- [x] annual paid budget の free-first / fallback / cap blocking / persistence / 基本的な paid order を mock test する。
-- [ ] annual reset と concurrent-process lock の境界テストを追加する。
+- [x] input-token counting、input/stdin/raw、reasoning effort、actual usage diagnostics の mock test を追加する。
+- [x] annual paid budget の free-first / fallback / Costs API の外部支出 / cap blocking / persistence / 基本 paid order を mock test する。
+- [ ] annual reset、Costs pagination、legacy ledger migration、concurrent-process lock の境界テストを追加する。
 - [ ] 将来の Python / Swift でも同じ policy fixture を使う。
 
 ## P2
 
-- [ ] Python 3 で共通 policy / registry / annual paid budget を実装する。
+- [ ] Python 3 で共通 policy / registry / reasoning effort / Organization Costs / annual paid budget を実装する。
 - [ ] Swift 6 Package で同じ policy を実装する。
 
 ## Design constraints
 
 - 無料 quota を常に先に試す。
-- 有料 fallback はローカル年間上限（既定 `$5` / UTC 暦年）で制限する。
+- 有料 fallback は年間上限（既定 `$5` / UTC 暦年）で制限する。
+- Organization Costs を実支出の下限とし、local accounting は reporting-delay window と結果不明 request の guard に使う。
 - 無料 quota のモデル順は quota token あたりの能力、有料 fallback は年間ドル予算内の能力/コストを重視する。
+- `--quality` はモデル選択順、`--effort` は選択されたモデル内の reasoning を制御する。
 - モデル選択のための推論 call は行わない。
 - quota group と quality/task difficulty を混同しない。
 - 現行 OpenAI 一次資料と観測 API 挙動を stale な仮定より優先する。
