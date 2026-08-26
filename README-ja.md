@@ -12,7 +12,7 @@ OpenAIQuotaFuse は、OpenAI API の無料トークン枠を安全側に見積�
     $EDITOR .env
     python3 python/openai_quota_fuse.py run "富士山の高さは？"
 
-Python 3 CLI を移植性の高い推奨実装とし、Codex プラグインからもこれを実行面として使います。Python 標準ライブラリだけで動作します。Unix 環境向けには `./shell/openai-quota-fuse.sh` も reference implementation として残しており、こちらは Bash、curl、jq が必要です。
+Python 3 CLI を正規実装とし、Codex プラグインからもこれを実行面として使います。Python 標準ライブラリだけで動作します。Unix 環境では `./shell/openai-quota-fuse.sh` も使えますが、これは同じ Python CLI を呼ぶ薄い Bash 互換 wrapper です。別の quota logic は持たないため、必要なのは Bash と Python 3 です。
 
 `OPENAI_ADMIN_KEY` は Organization Usage と Organization Costs の取得だけに使います。Organization Owner は API Platform の Organization settings → Admin keys から作成できます: https://platform.openai.com/settings/organization/admin-keys 。通常の project `OPENAI_API_KEY` は input token 数の取得と推論に使い、Admin key とは分離してください。
 
@@ -96,7 +96,7 @@ Terra と Luna は high-volume の無料 token quota を共有するため、無
 
 `-r/--raw` では stdout に抽出済み text ではなく Responses API の完全な JSON を出します。classifier の判定、quota/model/usage の診断情報は stderr に出します。
 
-reference implementation は plain text input と model/quality/effort/max-output/raw に意図的に限定します。tools、structured output schema、files/images、`previous_response_id`、任意の Responses API field は quota/accounting 上の意味を定義するまで非対応です。
+正規の Python 実装は plain text input と model/quality/effort/max-output/raw に意図的に限定します。tools、structured output schema、files/images、`previous_response_id`、任意の Responses API field は quota/accounting 上の意味を定義するまで非対応です。
 
 旧 positional 形式 `check MODEL TOKENS` と `select TOKENS [MODEL ...]` は 0.x の間は互換維持します。正規形は long/short option とし、positional 互換は 1.0 で削除予定です。
 
@@ -109,12 +109,12 @@ reference implementation は plain text input と model/quality/effort/max-outpu
     python3 python/openai_quota_fuse.py check -m gpt-5.6-sol -t 8000
     python3 python/openai_quota_fuse.py status -r
 
-同等の Shell command は `./shell/openai-quota-fuse.sh` から引き続き利用できます。
+同等の Shell entry point は `./shell/openai-quota-fuse.sh` から引き続き利用できます。処理はそのまま Python CLI へ委譲されます。
 
 ## ポリシーと保守
 
 無料枠の会計対象は `models.json`、無料・有料の自動選択方針と classifier 設定は `model-selection.json` に置きます。これらが古くなった場合は現在の OpenAI 一次資料を優先します。
 
-incentive 固有の Usage API 挙動を検証し終えるまでは、登録モデルの Usage をすべて消費として数えます。金額会計は Organization Costs を使います。モデルポリシーは `bash scripts/audit-model-policy.sh` と週次 workflow で監査します。
+incentive 固有の Usage API 挙動を検証し終えるまでは、正規実装は登録モデルの Usage をすべて消費として数えます。金額会計は Organization Costs を使います。モデルポリシーは `bash scripts/audit-model-policy.sh` と週次 workflow で監査します。
 
 言語共通のポリシーは `spec/QUOTA_POLICY.md`、残作業は [docs-ja/TODO.md](docs-ja/TODO.md) を参照してください。
