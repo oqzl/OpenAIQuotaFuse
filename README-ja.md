@@ -1,0 +1,44 @@
+# OpenAIQuotaFuse
+
+[English](README.md) | 日本語
+
+OpenAIQuotaFuse は、OpenAI の Data Sharing Incentive 対象トラフィックに付与される日次無料トークン枠の範囲内へ、原則として API 利用を収めるための OpenAI 専用 quota guard です。
+
+Shell / Python 3 / Swift 6 で同じポリシーを実装する予定で、まず Shell CLI をリファレンス実装として作ります。
+
+## Shell MVP
+
+必要なもの:
+
+- Bash
+- curl
+- jq
+- Organization Usage API を参照できる OpenAI Admin API key
+
+初期設定:
+
+    cp .env.example .env
+    $EDITOR .env
+
+現在の quota 残量を保守的に確認:
+
+    ./shell/openai-quota-fuse.sh status
+
+Usage API の生レスポンスを確認（service tier の実データ検証用）:
+
+    ./shell/openai-quota-fuse.sh status --raw
+
+指定した推定トークン数のリクエストが収まるか判定:
+
+    ./shell/openai-quota-fuse.sh check gpt-5.6-sol 8000
+
+ユーザー指定の優先順で、無料枠に収まる最初のモデルを選択:
+
+    ./shell/openai-quota-fuse.sh select 8000 \
+      gpt-5.6-sol \
+      gpt-5.6-luna \
+      gpt-5.6-terra
+
+現在の Shell MVP は、無料対象モデルに対する当日の Usage をすべて quota 消費として数えます。実際の incentive 適用量より残量を少なく見積もる可能性はありますが、Usage API における incentive 固有の会計方法を実データで確認するまでは、無料残量を過大評価しないことを優先します。
+
+言語共通のポリシーは `spec/QUOTA_POLICY.md` を参照してください。
