@@ -1,0 +1,22 @@
+name: Python tests
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+jobs:
+  python:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Syntax check
+        run: python -m py_compile python/openai_quota_fuse.py tests/python/test_openai_quota_fuse.py
+      - name: Unit tests
+        run: python -m unittest discover -s tests/python -v
+      - name: Validate plugin manifest JSON
+        run: python -m json.tool .codex-plugin/plugin.json >/dev/null
