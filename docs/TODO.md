@@ -15,7 +15,7 @@
 
 - [x] Add `run` as the primary user-facing command.
 - [x] Accept requests through `--input/-i`, `--input -`, non-TTY stdin, and positional prompt input.
-- [x] Keep `OPENAI_API_KEY` separate from Organization Usage `OPENAI_ADMIN_KEY`.
+- [x] Keep `OPENAI_API_KEY` separate from Organization Usage/Costs `OPENAI_ADMIN_KEY`.
 - [x] Document where Organization Owners create the Admin API key and its administrative-only use.
 - [x] Count actual request input with `POST /responses/input_tokens`.
 - [x] Reserve `input_tokens + max_output_tokens` before inference.
@@ -23,28 +23,32 @@
 - [x] Execute the Responses API request only after the quota/budget check succeeds.
 - [x] Expose returned usage in stderr diagnostics.
 - [x] Add `--max-output-tokens/-o`, `--model/-m`, `--raw/-r`, and `--input/-i` to `run`.
-- [x] Define P0 Responses scope: plain text only; tools, structured output, files/images, previous responses, and arbitrary fields are intentionally unsupported until quota/cost semantics are defined.
+- [x] Add `--effort/-e` for Responses API `reasoning.effort`, independent of model-selection `--quality/-q`.
+- [x] Define P0 Responses scope: plain text plus model/quality/effort/max-output/raw controls; tools, structured output, files/images, previous responses, and arbitrary fields remain intentionally unsupported until quota/cost semantics are defined.
 
 ## P0 — Annual prepaid-credit budget
 
 - [x] Treat intentional paid fallback as a separate budget from complimentary daily token quota.
-- [x] Default policy: complimentary quota first; paid execution only while the local UTC-calendar-year budget remains below `$5`; block a request whose worst-case reservation would exceed the cap.
+- [x] Default policy: complimentary quota first; paid execution only while the UTC-calendar-year budget remains below `$5`; block a request whose worst-case reservation would exceed the cap.
 - [x] Make the annual paid-use budget configurable with `$5` default and `0` as disable.
 - [x] Estimate paid cost from reviewed model input/output pricing before execution and reconcile actual response usage afterward.
 - [x] Keep paid-fallback ordering separate: ordinary `low` is Luna → Terra → Sol; explicit `high` remains Sol-first.
-- [x] Use explicit local persistent accounting as the source of truth for the OpenAIQuotaFuse annual cap; do not guess OpenAI billing state.
-- [x] Define annual reset as January 1 00:00 UTC and persist an append-only JSON event ledger with reservation/reconciliation entries.
+- [x] Use the official Organization Costs endpoint as the financial year-to-date spend floor, so direct API usage outside OpenAIQuotaFuse is included after reporting.
+- [x] Follow Costs pagination from January 1 00:00 UTC and sum USD amounts across the full UTC calendar year.
+- [x] Keep a conservative local lag guard for recent QuotaFuse paid requests; unknown-outcome reservations remain charged rather than silently disappearing.
+- [x] Add `costs` / `costs --raw` inspection for official spend, local guard, effective budget spend, and raw Costs pages.
 - [x] Keep purchased-credit expiry separate from the annual cap; OpenAI currently documents purchased credits as expiring after one year.
 - [x] Do not scrape Billing UI. No reliable documented runtime prepaid balance + grant-expiry API is currently used.
 - [x] Do not implement expiry burn-down until reliable official expiry metadata exists.
 - [x] Never intentionally exceed the annual cap: persist the worst-case reservation before dispatch; retain it when inference outcome is unknown.
-- [x] Multiple grants, expiry dates, delayed billing, and negative OpenAI balance do not alter the local annual cap; the local ledger deliberately remains independent.
 - [x] If expiry metadata is unavailable, do not guess. Future explicit expiry configuration may be added only as an optional burn-down input.
 
 ## P1 — Accounting validation
 
 - [x] Validate `status --raw` with a real Admin API key for zero usage (`results: []`).
 - [ ] Perform a live inference probe and inspect the resulting Usage API record once API billing is active.
+- [ ] Validate `costs` with a real Admin API key and record a sanitized year-to-date Costs response.
+- [ ] Observe practical Costs reporting delay after a paid inference and revisit the conservative seven-day local guard if evidence supports a narrower bound.
 - [ ] Determine whether Usage API `service_tier` can reliably distinguish incentive-covered traffic.
 - [ ] Until validated, count all usage on registered eligible models so complimentary capacity is never overstated.
 - [ ] Document sanitized observed Usage API examples.
@@ -62,29 +66,31 @@
 - [ ] Add broader Shell tests with mocked Usage API responses.
 - [ ] Cover UTC reset, tier limits, reserve calculation, unknown models, exhausted groups, and candidate fallback.
 - [ ] Cover long/short CLI aliases and explicit candidate ordering.
-- [x] Add a mocked test covering authoritative input-token counting and `run`, including input/stdin/raw and actual usage diagnostics.
-- [x] Add mocked annual paid-budget coverage for free-first, paid fallback, cap blocking, persistence, and explicit paid ordering basics.
-- [ ] Add deeper annual-budget tests for annual reset and concurrent-process locking.
+- [x] Add a mocked test covering authoritative input-token counting and `run`, including input/stdin/raw, reasoning effort, and actual usage diagnostics.
+- [x] Add mocked annual paid-budget coverage for free-first, paid fallback, Costs API external spend, cap blocking, persistence, and explicit paid ordering basics.
+- [ ] Add deeper annual-budget tests for annual reset, Costs pagination, legacy-ledger migration, and concurrent-process locking.
 - [ ] Run the same policy fixtures against future Python and Swift implementations.
 
 ## P2 — Python 3 implementation
 
 - [ ] Implement `spec/QUOTA_POLICY.md`, sharing `models.json` and `model-selection.json`.
 - [ ] Match useful Shell semantics while keeping the Python API idiomatic.
-- [ ] Implement the same conservative `run` reservation and annual paid-budget behavior.
+- [ ] Implement the same conservative `run`, reasoning-effort, Organization Costs, and annual paid-budget behavior.
 
 ## P2 — Swift 6 implementation
 
 - [ ] Add a Swift Package implementing the same quota policy.
 - [ ] Share or generate strongly typed data from the machine-readable registries.
 - [ ] Keep networking and policy logic separable.
-- [ ] Implement the same conservative reservation and annual paid-budget behavior.
+- [ ] Implement the same conservative reservation, reasoning-effort, Organization Costs, and annual paid-budget behavior.
 
 ## Design constraints
 
 - Complimentary quota is always attempted first.
-- Paid fallback is bounded by the configured local annual cap; intended default is `$5` per UTC calendar year.
+- Paid fallback is bounded by the configured annual cap; intended default is `$5` per UTC calendar year.
+- Organization Costs is the financial spend floor; local paid accounting exists only to guard the reporting-delay window and unknown outcomes.
 - Complimentary ordering optimizes capability per quota token; paid ordering optimizes capability/cost under a dollar budget.
+- `--quality` selects model preference; `--effort` controls reasoning inside the selected model.
 - Quota checks must not spend an inference call merely to choose a model.
 - Complimentary quota groups are not model-quality/task-difficulty profiles.
 - Current OpenAI primary documentation and observed API behavior take precedence over stale assumptions.
