@@ -18,6 +18,7 @@
 - [x] 小さな Luna classifier で通常のモデル選択前に `low` / `high` だけを判定する。
 - [x] 明示 `-q low` / `-q high` / `-m MODEL` を自動判定より優先し、classifier を呼ばない。
 - [x] classifier 自身の `input_tokens + max_output_tokens` を無料 quota に予約してから dispatch する。
+- [x] classifier の token count では `/responses/input_tokens` が受け付ける field だけを送り、`max_output_tokens` など Responses 本体専用 field を流用しない。
 - [x] quality 判定だけのために有料 fallback は使わない。classifier が使えない、または不正出力なら設定済み `low` fallback を使う。
 - [x] classifier と routing の診断を stderr に出す。
 - [x] classifier model / effort / output cap / instructions / fallback を `model-selection.json` に置く。
@@ -37,7 +38,9 @@
 - [x] actual usage を stderr に表示する。
 - [x] `--max-output-tokens/-o`、`--model/-m`、`--raw/-r`、`--input/-i` を実装する。
 - [x] `--effort/-e` で Responses API の `reasoning.effort` を指定し、モデル選択の `--quality/-q` とは分離する。
-- [x] plain text + model/quality/effort/max-output/raw に限定し、tools / structured output / files/images / previous response / 任意 field は quota/cost semantics を定義するまで非対応とする。
+- [x] repeatable な `--context/-c FILE` で明示 UTF-8 text context を渡し、その全体を token count に含める。
+- [x] named `--session/-s NAME` で最新 response ID を保存し、次回の token count と本推論の両方へ `previous_response_id` を渡す。
+- [x] 対応 scope を plain text、明示 text context、named session、model/quality/effort/max-output/raw に限定する。tools / structured output / images / 任意 field / directory 再帰 / 暗黙 file upload は quota/cost semantics を定義するまで非対応とする。
 
 ## P0 — 年間プリペイド予算
 
@@ -77,7 +80,7 @@
 ## P1 — テスト
 
 - [x] quota grouping/reserve、pricing、output extraction、paid-ledger guard の Python unit test を追加する。
-- [x] input-token counting、input/stdin/raw、reasoning effort、自動 quality、明示 classifier bypass、Costs API spend、paid fallback、ledger completion、annual-cap blocking を mocked HTTP E2E で検証する。
+- [x] input-token counting、input/stdin/raw、reasoning effort、自動 quality、明示 classifier bypass、strict input-token payload、text context、named session、Costs API spend、paid fallback、ledger completion、annual-cap blocking を mocked HTTP E2E で検証する。
 - [x] PR と `main` push の CI で Python syntax、unit、mocked E2E、plugin manifest JSON validation を実行する。
 - [x] Shell CI は wrapper smoke test のみにし、policy test は Python に一本化する。
 - [ ] UTC reset、tier、reserve、unknown model、quota 枯渇、candidate fallback をさらに深く網羅する。
