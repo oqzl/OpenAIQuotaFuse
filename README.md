@@ -16,81 +16,45 @@ The goal is to reduce the need to manually reason about remaining quota and mode
 
 ## Quick start
 
-The normal path is deliberately simple:
-
-    want to call OpenAI
-            ↓
-    OpenAIQuotaFuse
-            ↓
-     fits free quota?
-       ↓ YES  ↓ NO
-       call    stop
-
-For ordinary use, start with `run`. You do not need to manually combine `status` and `select`.
-
-Current accounting intentionally errs on the conservative side so complimentary capacity is not overstated. It may stop earlier than the actual incentive allowance requires.
-
-### 1. Clone
-
     git clone https://github.com/oqzl/OpenAIQuotaFuse.git
     cd OpenAIQuotaFuse
-
-Requirements: Bash, curl, and jq.
-
-### 2. Configure two API keys
-
     cp .env.example .env
     $EDITOR .env
-
-Set:
-
-    OPENAI_ADMIN_KEY=...
-    OPENAI_API_KEY=...
-
-`OPENAI_ADMIN_KEY` reads Organization Usage. `OPENAI_API_KEY` is the normal inference key used by `run`. Keep the organization-level Admin credential separate from inference credentials.
-
-### 3. Run a prompt
-
     ./shell/openai-quota-fuse.sh run "How high is Mount Fuji?"
 
-OpenAIQuotaFuse checks remaining quota, selects an eligible model, and calls the Responses API. If no candidate fits the conservative quota estimate, it stops before inference.
+Requirements: Bash, curl, and jq. Configure `OPENAI_ADMIN_KEY` for Organization Usage and `OPENAI_API_KEY` for normal Responses API access.
 
-By default it uses the lightweight/low-cost `low` profile and tries candidates in this order:
+For ordinary complimentary-quota use, start with `run`. The default `low` profile tries:
 
-    gpt-5.6-luna → gpt-5.6-terra → gpt-5.6-sol
+    gpt-5.6-terra → gpt-5.6-luna → gpt-5.6-sol
 
-Example:
+Terra and Luna currently share the same high-volume complimentary token quota, and that quota is accounted in tokens rather than API dollars. While the request remains inside complimentary quota, Luna's lower paid API price does not save quota. Terra is therefore preferred first because it is the more capable model. Luna remains useful as the cheaper option for future paid fallback.
 
-    quota: OK (conservative estimate 1068 tokens)
-    model: gpt-5.6-luna
+Use `-q high` only when the task needs the Sol-first quality order:
 
-    Mount Fuji is 3,776 meters high.
+    gpt-5.6-sol → gpt-5.6-terra → gpt-5.6-luna
 
-## Use high only when the task needs it
+## What `run` checks
 
-You do not need to pass `-q low` for normal use. `low` is already the default.
+Before inference, `run` calls `POST /v1/responses/input_tokens` with the candidate model and real prompt. It reserves:
 
-Explicitly request `high` when quality matters more than using the lightweight candidate order:
+    authoritative input_tokens + max_output_tokens
 
-    ./shell/openai-quota-fuse.sh run -q high "Review the technical weaknesses of this design in detail"
+Only after that reservation fits the complimentary quota does it call `POST /v1/responses`. The completed response's actual `usage.input_tokens`, `usage.output_tokens`, and `usage.total_tokens` are printed to stderr as diagnostics.
 
-The current `high` order is:
+Example diagnostics:
 
-    gpt-5.6-sol → gpt-5.6-luna → gpt-5.6-terra
+    quota: OK (input=12 + max_output=256 => reserve=268 tokens)
+    model: gpt-5.6-terra
+    usage: input=12 output=34 total=46
 
-Force a model:
+Force a model or reduce the maximum output allowance with `-m` / `-o`:
 
-    ./shell/openai-quota-fuse.sh run -m gpt-5.6-luna "What is 1+1?"
+    ./shell/openai-quota-fuse.sh run -m gpt-5.6-luna -o 256 "Answer in one sentence"
 
-Reduce the maximum output allowance:
-
-    ./shell/openai-quota-fuse.sh run -o 256 "Answer in one sentence"
-
-`run` currently estimates input size locally on the conservative side and adds `max-output-tokens` before selecting/checking quota. This is not an exact tokenizer. Replacing the local estimate with authoritative input-token counting from the API is tracked in TODO.
+Current accounting still intentionally errs on the conservative side when deriving remaining complimentary capacity from Organization Usage. It may stop earlier than the actual incentive allowance requires.
 
 ## Inspection commands
-
-These are useful when you want to inspect what `run` is doing:
 
     ./shell/openai-quota-fuse.sh status
     ./shell/openai-quota-fuse.sh models
@@ -98,18 +62,10 @@ These are useful when you want to inspect what `run` is doing:
     ./shell/openai-quota-fuse.sh check -m gpt-5.6-sol -t 8000
     ./shell/openai-quota-fuse.sh status -r
 
-## How policy is stored
+## Policy and maintenance
 
-Eligible models and quota-group limits change over time, so they live in the shared machine-readable `models.json` registry rather than being independently hard-coded. `models.json` stays broad for accounting, while `model-selection.json` contains the curated candidates used for automatic selection.
+Eligible models and quota-group limits live in `models.json`; curated automatic-selection candidates live in `model-selection.json`. Quota groups describe complimentary capacity, not task difficulty or model quality.
 
-Quota groups describe complimentary quota capacity. They are not model-quality or task-difficulty profiles.
+The Shell implementation deliberately counts all usage on registered models until incentive-specific Usage API behavior is validated. `bash scripts/audit-model-policy.sh` checks model-policy review age; the GitHub workflow also runs weekly.
 
-The Shell implementation deliberately counts all usage on registered models. This is conservative: it may stop early, but avoids overstating free capacity while incentive-specific accounting behavior is being validated.
-
-## Periodic model-policy audit
-
-    bash scripts/audit-model-policy.sh
-
-`.github/workflows/model-policy-audit.yml` also runs weekly. The current review interval is 30 days.
-
-See `spec/QUOTA_POLICY.md` for the language-neutral policy and [docs/TODO.md](docs/TODO.md) for remaining implementation work.
+See `spec/QUOTA_POLICY.md` for language-neutral policy and [docs/TODO.md](docs/TODO.md) for remaining work.

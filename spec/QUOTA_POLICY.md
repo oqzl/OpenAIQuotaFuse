@@ -2,7 +2,7 @@
 
 ## Goal
 
-OpenAIQuotaFuse should normally prevent inference requests that would exceed OpenAI's complimentary daily token quota for eligible data-sharing traffic. Small billing leakage caused by reporting delay or concurrent clients is tolerated operationally, but paid quota is not treated as an available fallback budget.
+OpenAIQuotaFuse should normally prevent inference requests that would exceed OpenAI's complimentary daily token quota for eligible data-sharing traffic. Small billing leakage caused by reporting delay or concurrent clients is tolerated operationally, but paid quota is not yet treated as an available fallback budget.
 
 ## Reset boundary
 
@@ -26,7 +26,9 @@ Models explicitly documented as shut down are omitted even if they remain visibl
 
 ## Request boundary
 
-If a new request would make the running daily total exceed the relevant quota, OpenAI bills the entire request at normal rates. Therefore a client must reserve enough quota for the whole estimated request, not merely its expected overage.
+If a new request would make the running daily total exceed the relevant quota, OpenAI bills the entire request at normal rates. Therefore a client must reserve enough quota for the whole request, not merely its expected overage.
+
+For `run`, input tokens are counted with the Responses input-token endpoint and `max_output_tokens` is added before inference.
 
 ## Conservative accounting
 
@@ -42,21 +44,31 @@ Available capacity is:
 
     max(0, quota - accounted_usage - safety_reserve)
 
-A candidate model can be selected only when its group's available capacity is at least the caller's estimated total tokens for the request.
+A candidate model can be selected only when its group's available capacity is at least the reserved token requirement for the request.
 
 ## Model selection
 
-The caller may supply models in preference order. If omitted, OpenAIQuotaFuse uses the curated defaults in `model-selection.json`.
+The caller may supply models in preference order. If omitted, OpenAIQuotaFuse uses the curated quality profiles in `model-selection.json`.
 
-Example preference order:
+For complimentary quota, candidate ordering optimizes capability per quota token, not API dollar price. When two models consume the same shared complimentary token quota, the more capable model may be preferred even if its paid API price is higher.
+
+Current ordinary (`low`) preference order:
+
+    gpt-5.6-terra
+    gpt-5.6-luna
+    gpt-5.6-sol
+
+Current explicit `high` preference order:
 
     gpt-5.6-sol
-    gpt-5.6-luna
     gpt-5.6-terra
+    gpt-5.6-luna
+
+Terra and Luna currently share the high-volume complimentary quota, so Luna's lower API dollar price does not reduce complimentary quota consumption. Terra is therefore preferred for ordinary complimentary execution. A future paid fallback policy should use a separately justified cost-aware ordering, where Luna can precede Terra.
 
 The first candidate whose quota group has sufficient available capacity is selected. If no candidate fits, selection fails without making an inference request.
 
-Future quality profiles such as `high`, `normal`, and `low` should map to explicit curated candidate lists rather than asking another model to classify the request.
+Quality profiles map to explicit curated candidate lists and must not spend an inference call merely to classify the request.
 
 ## CLI option conventions
 
