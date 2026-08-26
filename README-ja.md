@@ -14,13 +14,15 @@ OpenAIQuotaFuse は、OpenAI API の無料トークン枠をできるだけ超�
 
 必要なのは Bash、curl、jq です。`OPENAI_ADMIN_KEY` は Organization Usage の取得、`OPENAI_API_KEY` は通常の Responses API 呼び出しに使います。
 
-普段は `run` だけ覚えれば構いません。既定の `low` profile は次の順です。
+普段の無料 quota 利用では `run` だけ覚えれば構いません。既定の `low` profile は次の順です。
 
-    gpt-5.6-luna → gpt-5.6-terra → gpt-5.6-sol
+    gpt-5.6-terra → gpt-5.6-luna → gpt-5.6-sol
+
+Terra と Luna は現在、同じ high-volume の無料 token quota を共有し、無料枠の消費は API のドル単価ではなく token 数で数えます。そのため無料 quota 内では Luna の低価格は quota 節約になりません。より高性能な Terra を先に使い、Luna は将来の有料 fallback で安価な選択肢として活かす方針です。
 
 難しい仕事だけ `-q high` を明示します。
 
-    gpt-5.6-sol → gpt-5.6-luna → gpt-5.6-terra
+    gpt-5.6-sol → gpt-5.6-terra → gpt-5.6-luna
 
 ## `run` が確認するもの
 
@@ -31,7 +33,7 @@ OpenAIQuotaFuse は、OpenAI API の無料トークン枠をできるだけ超�
 この予約量が無料 quota に収まることを確認してから `POST /v1/responses` を実行します。完了後は実レスポンスの `usage.input_tokens`、`usage.output_tokens`、`usage.total_tokens` を診断情報として stderr に表示します。
 
     quota: OK (input=12 + max_output=256 => reserve=268 tokens)
-    model: gpt-5.6-luna
+    model: gpt-5.6-terra
     usage: input=12 output=34 total=46
 
 モデル固定と最大出力指定:
