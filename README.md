@@ -24,13 +24,15 @@ The goal is to reduce the need to manually reason about remaining quota and mode
 
 Requirements: Bash, curl, and jq. Configure `OPENAI_ADMIN_KEY` for Organization Usage and `OPENAI_API_KEY` for normal Responses API access.
 
-For ordinary use, start with `run`. The default `low` profile tries:
+For ordinary complimentary-quota use, start with `run`. The default `low` profile tries:
 
-    gpt-5.6-luna → gpt-5.6-terra → gpt-5.6-sol
+    gpt-5.6-terra → gpt-5.6-luna → gpt-5.6-sol
 
-Use `-q high` only when the task needs the quality-first order:
+Terra and Luna currently share the same high-volume complimentary token quota, and that quota is accounted in tokens rather than API dollars. While the request remains inside complimentary quota, Luna's lower paid API price does not save quota. Terra is therefore preferred first because it is the more capable model. Luna remains useful as the cheaper option for future paid fallback.
 
-    gpt-5.6-sol → gpt-5.6-luna → gpt-5.6-terra
+Use `-q high` only when the task needs the Sol-first quality order:
+
+    gpt-5.6-sol → gpt-5.6-terra → gpt-5.6-luna
 
 ## What `run` checks
 
@@ -43,7 +45,7 @@ Only after that reservation fits the complimentary quota does it call `POST /v1/
 Example diagnostics:
 
     quota: OK (input=12 + max_output=256 => reserve=268 tokens)
-    model: gpt-5.6-luna
+    model: gpt-5.6-terra
     usage: input=12 output=34 total=46
 
 Force a model or reduce the maximum output allowance with `-m` / `-o`:
