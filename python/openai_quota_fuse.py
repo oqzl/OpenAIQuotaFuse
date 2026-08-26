@@ -28,6 +28,9 @@ DEFAULT_MODELS_FILE = REPO_ROOT / "models.json"
 DEFAULT_SELECTION_FILE = REPO_ROOT / "model-selection.json"
 LOCAL_COST_GUARD_SECONDS = 7 * 24 * 60 * 60
 SESSION_NAME_RE = re.compile(r"^[A-Za-z0-9._-]+$")
+RESPONSE_MIN_OUTPUT_TOKENS = 16
+RESPONSE_MAX_OUTPUT_TOKENS = 128_000
+GPT56_REASONING_EFFORTS = {"none", "low", "medium", "high", "xhigh", "max"}
 
 
 class FuseError(RuntimeError):
@@ -38,6 +41,20 @@ class FuseError(RuntimeError):
 
 def eprint(*args: object) -> None:
     print(*args, file=sys.stderr)
+
+
+def validate_max_output_tokens(value: int) -> int:
+    if not RESPONSE_MIN_OUTPUT_TOKENS <= value <= RESPONSE_MAX_OUTPUT_TOKENS:
+        raise FuseError(
+            f"max output tokens must be {RESPONSE_MIN_OUTPUT_TOKENS}..{RESPONSE_MAX_OUTPUT_TOKENS}"
+        )
+    return value
+
+
+def validate_reasoning_effort(value: str | None) -> str | None:
+    if value is not None and value not in GPT56_REASONING_EFFORTS:
+        raise FuseError("effort must be one of: none, low, medium, high, xhigh, max")
+    return value
 
 
 def load_env_file() -> None:
@@ -152,6 +169,28 @@ def registries() -> tuple[dict[str, Any], dict[str, Any]]:
         raise FuseError("invalid model registry")
     if selection.get("schema_version") != 1 or not isinstance(selection.get("quality_profiles"), dict):
         raise FuseError("invalid selection policy")
+
+    cfg = selection.get("auto_quality")
+    if not isinstance(cfg, dict):
+        raise FuseError("invalid auto quality configuration")
+    classifier_model = cfg.get("classifier_model")
+    if not isinstance(classifier_model, str) or not classifier_model:
+        raise FuseError("invalid auto quality classifier model")
+    if model_group(classifier_model, models) is None:
+        raise FuseError(f"auto quality classifier model is not in models.json: {classifier_model}")
+    try:
+        classifier_max_output = int(cfg.get("max_output_tokens"))
+    except (TypeError, ValueError) as exc:
+        raise FuseError("invalid auto quality max_output_tokens") from exc
+    validate_max_output_tokens(classifier_max_output)
+    classifier_effort = cfg.get("reasoning_effort")
+    if not isinstance(classifier_effort, str):
+        raise FuseError("invalid auto quality reasoning_effort")
+    validate_reasoning_effort(classifier_effort)
+    if not isinstance(cfg.get("instructions"), str) or not str(cfg["instructions"]).strip():
+        raise FuseError("invalid auto quality instructions")
+    if cfg.get("fallback_quality") not in {"low", "high"}:
+        raise FuseError("invalid auto quality fallback_quality")
     return models, selection
 
 
@@ -268,6 +307,8 @@ def select_model(tokens: int, quality: str, models: dict[str, Any], selection: d
 
 def request_payload(model: str, input_text: str, max_output: int, effort: str | None = None,
                     previous_response_id: str | None = None) -> dict[str, Any]:
+    validate_max_output_tokens(max_output)
+    validate_reasoning_effort(effort)
     payload: dict[str, Any] = {"model": model, "input": input_text, "max_output_tokens": max_output}
     if effort:
         payload["reasoning"] = {"effort": effort}
@@ -308,17 +349,18 @@ def count_input_tokens(payload: dict[str, Any]) -> int:
 def classify_quality(prompt: str, models: dict[str, Any], selection: dict[str, Any]) -> str:
     cfg = selection["auto_quality"]
     fallback = str(cfg["fallback_quality"])
-    response_payload = {
-        "model": cfg["classifier_model"], "input": prompt, "instructions": cfg["instructions"],
-        "max_output_tokens": int(cfg["max_output_tokens"]),
-        "reasoning": {"effort": cfg["reasoning_effort"]},
-    }
+    classifier_max_output = validate_max_output_tokens(int(cfg["max_output_tokens"]))
+    classifier_effort = validate_reasoning_effort(str(cfg["reasoning_effort"]))
+    response_payload = request_payload(
+        str(cfg["classifier_model"]), prompt, classifier_max_output, classifier_effort
+    )
+    response_payload["instructions"] = str(cfg["instructions"])
     try:
         count_payload = input_token_payload(
             str(cfg["classifier_model"]), prompt, instructions=str(cfg["instructions"])
         )
         input_tokens = count_input_tokens(count_payload)
-        required = input_tokens + int(cfg["max_output_tokens"])
+        required = input_tokens + classifier_max_output
         allowed, _, _ = check_model(str(cfg["classifier_model"]), required, models)
         if not allowed:
             raise FuseError("classifier has no complimentary quota", 4)
@@ -327,7 +369,7 @@ def classify_quality(prompt: str, models: dict[str, Any], selection: dict[str, A
         if value not in {"low", "high"}:
             raise FuseError("classifier returned invalid result", 5)
         eprint(f"quality: auto -> {value}")
-        eprint(f"classifier: {cfg['classifier_model']} (input={input_tokens} + max_output={cfg['max_output_tokens']})")
+        eprint(f"classifier: {cfg['classifier_model']} (input={input_tokens} + max_output={classifier_max_output})")
         return value
     except (FuseError, IndexError) as exc:
         eprint(f"warning: auto quality classifier unavailable ({exc}); using {fallback}")
@@ -526,10 +568,8 @@ def cmd_run(args: argparse.Namespace, models: dict[str, Any], selection: dict[st
             prompt = sys.stdin.read()
     if not prompt:
         raise FuseError("run requires --input, a positional prompt, or stdin")
-    if args.max_output_tokens <= 0:
-        raise FuseError("max output tokens must be a positive integer")
-    if args.effort and args.effort not in {"none", "low", "medium", "high", "xhigh", "max"}:
-        raise FuseError("effort must be one of: none, low, medium, high, xhigh, max")
+    validate_max_output_tokens(args.max_output_tokens)
+    validate_reasoning_effort(args.effort)
 
     input_text = compose_input(prompt, args.context)
     previous_response_id = load_session_response_id(args.session)
