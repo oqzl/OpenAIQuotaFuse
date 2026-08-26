@@ -4,6 +4,16 @@
 
 OpenAIQuotaFuse is a quota guard for calling the OpenAI API while conservatively staying inside the complimentary daily token quota available to eligible data-sharing traffic.
 
+Instead of calling the OpenAI API directly, ordinary usage goes through OpenAIQuotaFuse:
+
+    Direct:
+    you → OpenAI API
+
+    With OpenAIQuotaFuse:
+    you → quota check → model selection → OpenAI API
+
+The goal is to reduce the need to manually reason about remaining quota and model choice for every request.
+
 ## Quick start
 
 The normal path is deliberately simple:
@@ -17,6 +27,8 @@ The normal path is deliberately simple:
        call    stop
 
 For ordinary use, start with `run`. You do not need to manually combine `status` and `select`.
+
+Current accounting intentionally errs on the conservative side so complimentary capacity is not overstated. It may stop earlier than the actual incentive allowance requires.
 
 ### 1. Clone
 
@@ -43,6 +55,10 @@ Set:
 
 OpenAIQuotaFuse checks remaining quota, selects an eligible model, and calls the Responses API. If no candidate fits the conservative quota estimate, it stops before inference.
 
+By default it uses the lightweight/low-cost `low` profile and tries candidates in this order:
+
+    gpt-5.6-luna → gpt-5.6-terra → gpt-5.6-sol
+
 Example:
 
     quota: OK (conservative estimate 1068 tokens)
@@ -50,11 +66,17 @@ Example:
 
     Mount Fuji is 3,776 meters high.
 
-## A little more control
+## Use high only when the task needs it
 
-Prefer the low-cost/light-task profile:
+You do not need to pass `-q low` for normal use. `low` is already the default.
 
-    ./shell/openai-quota-fuse.sh run -q low "What is 1+1?"
+Explicitly request `high` when quality matters more than using the lightweight candidate order:
+
+    ./shell/openai-quota-fuse.sh run -q high "Review the technical weaknesses of this design in detail"
+
+The current `high` order is:
+
+    gpt-5.6-sol → gpt-5.6-luna → gpt-5.6-terra
 
 Force a model:
 
@@ -64,7 +86,7 @@ Reduce the maximum output allowance:
 
     ./shell/openai-quota-fuse.sh run -o 256 "Answer in one sentence"
 
-`run` conservatively estimates input tokens and adds `max-output-tokens` before selecting/checking quota. This is intentionally not an exact tokenizer; the guard prefers stopping early to overstating complimentary capacity.
+`run` currently estimates input size locally on the conservative side and adds `max-output-tokens` before selecting/checking quota. This is not an exact tokenizer. Replacing the local estimate with authoritative input-token counting from the API is tracked in TODO.
 
 ## Inspection commands
 
