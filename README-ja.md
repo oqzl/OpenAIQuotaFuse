@@ -31,10 +31,11 @@ Python 3 CLI を正規実装とし、Codex プラグインからもこれを実�
     python3 python/openai_quota_fuse.py run "英訳して: おはよう"
     # quality: auto -> low
 
-    python3 python/openai_quota_fuse.py run "このリポジトリ全体を設計レビューして大規模リファクタ案を作って"
+    python3 python/openai_quota_fuse.py run \
+      "分散システムの移行方式を3案比較し、障害時の切り戻しまで含む段階的な移行計画を設計して"
     # quality: auto -> high
 
-classifier は `gpt-5.6-luna` + low reasoning + 最大8 output tokens の小さな判定タスクです。classifier 自身についても `input_tokens + max_output_tokens` を無料 quota に予約できる場合だけ呼びます。classifier が実行できない、または `low` / `high` 以外を返した場合は、有料判定へ fallback せず `low` を使います。
+classifier は `gpt-5.6-luna` + low reasoning + Responses API の最小値である16 output tokens の小さな判定タスクです。classifier 自身についても `input_tokens + max_output_tokens` を無料 quota に予約できる場合だけ呼びます。input token の計数には `/responses/input_tokens` が受け付ける入力関連フィールドだけを送り、Responses API 本体だけの `max_output_tokens` は送りません。classifier が実行できない、または `low` / `high` 以外を返した場合は、有料判定へ fallback せず `low` を使います。
 
 明示指定は自動判定より優先します。
 
@@ -80,23 +81,62 @@ Terra と Luna は high-volume の無料 token quota を共有するため、無
 
     input_tokens + max_output_tokens
 
-入力方法:
+`-o/--max-output-tokens` は現在の GPT-5.6 Responses API の範囲である 16〜128,000 tokens をローカルで検証します。範囲外の値は API を呼ぶ前に拒否します。
 
-    python3 python/openai_quota_fuse.py run "説明して"
-    python3 python/openai_quota_fuse.py run -i "説明して"
-    printf '%s\n' "説明して" | python3 python/openai_quota_fuse.py run
+まず普通に質問する:
+
+    python3 python/openai_quota_fuse.py run "富士山の高さは？"
+
+入力方法を変える:
+
+    python3 python/openai_quota_fuse.py run -i "HTTPの404と500の違いは？"
+    printf '%s\n' "京都府の府庁所在地は？" | python3 python/openai_quota_fuse.py run
     python3 python/openai_quota_fuse.py run -i - < prompt.txt
-    python3 python/openai_quota_fuse.py run -q low "軽い仕事として処理して"
-    python3 python/openai_quota_fuse.py run -q high "高品質モデルを優先して"
-    python3 python/openai_quota_fuse.py run -m gpt-5.6-luna -o 256 "一言で説明して"
-    python3 python/openai_quota_fuse.py run -e high "よく考えて答えて"
-    python3 python/openai_quota_fuse.py run -r "Responses API の JSON をそのまま返して"
+
+モデル選択や推論量を明示する:
+
+    python3 python/openai_quota_fuse.py run -q low "次の単語を英訳して: りんご"
+    python3 python/openai_quota_fuse.py run -q high \
+      "CAP定理の3要素と実システム設計上のトレードオフを具体例付きで説明して"
+    python3 python/openai_quota_fuse.py run -m gpt-5.6-luna -o 256 \
+      "TCPとUDPの違いを3点で説明して"
+    python3 python/openai_quota_fuse.py run -e high \
+      "12個の硬貨のうち1個だけ重さが異なる。天秤3回以内で特定する方法を考えて"
+
+Responses API の完全な response JSON を確認する:
+
+    python3 python/openai_quota_fuse.py run -r "富士山の高さは？"
+
+### context
+
+`-c/--context FILE` は UTF-8 text file を現在の user request の context として付加します。複数回指定できます。context を含めた実際の input 全体を token count してから quota 判定します。
+
+    python3 python/openai_quota_fuse.py run \
+      -c AGENTS.md \
+      -c README.md \
+      -c python/openai_quota_fuse.py \
+      "この実装を設計レビューして、優先度の高い改善点を挙げて"
+
+現時点では明示的な text file 指定だけを扱います。directory 再帰、glob、binary、OpenAI Files API / File Search は暗黙には使いません。
+
+### session
+
+`-s/--session NAME` を付けると、同じ名前で前回成功した Responses API の `response_id` をローカルへ保存し、次回の token count と本推論の両方に `previous_response_id` として渡します。これにより会話履歴を引き継げます。
+
+    python3 python/openai_quota_fuse.py run -s design \
+      -c python/openai_quota_fuse.py \
+      "この実装を設計レビューして"
+
+    python3 python/openai_quota_fuse.py run -s design \
+      "さっきの指摘のうち優先度が高い3つを詳しく説明して"
+
+session state は既定で `~/.local/state/openai-quota-fuse/sessions/` に置き、`OPENAI_QUOTA_FUSE_SESSION_DIR` で変更できます。保存するのは最新の response ID と更新時刻だけで、会話本文を QuotaFuse 側で複製保存しません。OpenAI 側で response が利用できなくなった場合、その session 継続も失敗します。
 
 `-q/--quality` は `auto`、`low`、`high`。省略時は `auto` です。`-e/--effort` は Responses API の `reasoning.effort` を指定し、quality とは独立です。quality はモデル選択順、effort は選ばれたモデル内部の推論量を制御します。effort の指定可能値は `none`、`low`、`medium`、`high`、`xhigh`、`max`。省略時はモデル/API の既定値をそのまま使います。
 
 `-r/--raw` では stdout に抽出済み text ではなく Responses API の完全な JSON を出します。classifier の判定、quota/model/usage の診断情報は stderr に出します。
 
-正規の Python 実装は plain text input と model/quality/effort/max-output/raw に意図的に限定します。tools、structured output schema、files/images、`previous_response_id`、任意の Responses API field は quota/accounting 上の意味を定義するまで非対応です。
+正規の Python 実装は plain text input に加え、明示的な text context と named session を扱います。tools、structured output schema、images、任意の Responses API field を中途半端な generic proxy としては通しません。それらは quota/accounting 上の意味を定義してから追加します。
 
 旧 positional 形式 `check MODEL TOKENS` と `select TOKENS [MODEL ...]` は 0.x の間は互換維持します。正規形は long/short option とし、positional 互換は 1.0 で削除予定です。
 

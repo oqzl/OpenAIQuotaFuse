@@ -31,10 +31,11 @@ See [docs/CODEX_PLUGIN.md](docs/CODEX_PLUGIN.md) for local marketplace installat
     python3 python/openai_quota_fuse.py run "Translate to Japanese: good morning"
     # quality: auto -> low
 
-    python3 python/openai_quota_fuse.py run "Review this repository architecture and design a broad refactor"
+    python3 python/openai_quota_fuse.py run \
+      "Compare three migration strategies for a distributed system and design a staged plan including rollback after failures"
     # quality: auto -> high
 
-The classifier uses `gpt-5.6-luna`, low reasoning effort, and at most 8 output tokens. Its own `input_tokens + max_output_tokens` must fit complimentary quota before the classifier is called. If classification cannot run or returns anything other than `low` / `high`, OpenAIQuotaFuse does not spend money on routing; it falls back to `low`.
+The classifier uses `gpt-5.6-luna`, low reasoning effort, and the Responses API minimum of 16 output tokens. Its own `input_tokens + max_output_tokens` must fit complimentary quota before the classifier is called. Input-token counting sends only fields accepted by `/responses/input_tokens`; response-only fields such as `max_output_tokens` are not sent there. If classification cannot run or returns anything other than `low` / `high`, OpenAIQuotaFuse does not spend money on routing; it falls back to `low`.
 
 Explicit choices override auto routing:
 
@@ -78,23 +79,62 @@ Before inference, `run` calls `POST /v1/responses/input_tokens`, then reserves:
 
     input_tokens + max_output_tokens
 
-Examples:
+`-o/--max-output-tokens` is validated locally against the current GPT-5.6 Responses API bounds: 16 through 128,000 tokens. Invalid values are rejected before any API call.
 
-    python3 python/openai_quota_fuse.py run "Explain this"
-    python3 python/openai_quota_fuse.py run -i "Explain this"
-    printf '%s\n' "Explain this" | python3 python/openai_quota_fuse.py run
+Start with an ordinary question:
+
+    python3 python/openai_quota_fuse.py run "How high is Mount Fuji?"
+
+Use a different input form:
+
+    python3 python/openai_quota_fuse.py run -i "What is the difference between HTTP 404 and 500?"
+    printf '%s\n' "What is the capital of Japan?" | python3 python/openai_quota_fuse.py run
     python3 python/openai_quota_fuse.py run -i - < prompt.txt
-    python3 python/openai_quota_fuse.py run -q low "Treat this as a cheap task"
-    python3 python/openai_quota_fuse.py run -q high "Prefer high-quality routing"
-    python3 python/openai_quota_fuse.py run -m gpt-5.6-luna -o 256 "Answer in one sentence"
-    python3 python/openai_quota_fuse.py run -e high "Think carefully"
-    python3 python/openai_quota_fuse.py run -r "Return the full Responses API JSON"
+
+Control routing or reasoning explicitly:
+
+    python3 python/openai_quota_fuse.py run -q low "Translate to English: りんご"
+    python3 python/openai_quota_fuse.py run -q high \
+      "Explain the CAP theorem and its practical system-design tradeoffs with concrete examples"
+    python3 python/openai_quota_fuse.py run -m gpt-5.6-luna -o 256 \
+      "Explain three differences between TCP and UDP"
+    python3 python/openai_quota_fuse.py run -e high \
+      "One of 12 coins has a different weight. Find it using at most three balance-scale weighings"
+
+Inspect the complete Responses API JSON:
+
+    python3 python/openai_quota_fuse.py run -r "How high is Mount Fuji?"
+
+### Context
+
+`-c/--context FILE` adds a UTF-8 text file to the current user request as context. The option is repeatable. Quota selection counts the full effective input including the supplied context files.
+
+    python3 python/openai_quota_fuse.py run \
+      -c AGENTS.md \
+      -c README.md \
+      -c python/openai_quota_fuse.py \
+      "Review this implementation and identify the highest-priority design improvements"
+
+The current implementation intentionally accepts explicit text files only. It does not implicitly recurse through directories, expand globs, accept binary files, or upload content to the OpenAI Files API / File Search.
+
+### Sessions
+
+`-s/--session NAME` stores the most recent successful Responses API `response_id` locally. The next invocation with the same name passes that ID as `previous_response_id` to both input-token counting and inference, preserving conversation history while keeping quota accounting aligned with the actual request.
+
+    python3 python/openai_quota_fuse.py run -s design \
+      -c python/openai_quota_fuse.py \
+      "Review this implementation"
+
+    python3 python/openai_quota_fuse.py run -s design \
+      "Expand the three highest-priority findings from the previous answer"
+
+Session state defaults to `~/.local/state/openai-quota-fuse/sessions/` and can be moved with `OPENAI_QUOTA_FUSE_SESSION_DIR`. OpenAIQuotaFuse stores only the latest response ID and update timestamp; it does not duplicate the conversation text locally. If the referenced OpenAI response is no longer available, continuing that session will fail.
 
 `-q/--quality` accepts `auto`, `low`, or `high` for `run`; omitting it means `auto`. `-e/--effort` controls Responses API `reasoning.effort` independently. `quality` chooses the model order while `effort` controls how much reasoning the selected model performs. Supported effort values are `none`, `low`, `medium`, `high`, `xhigh`, and `max`. Omitting effort leaves the model/API default unchanged.
 
 `-r/--raw` changes stdout from extracted output text to the complete Responses API JSON. Classifier, quota, model, and usage diagnostics remain on stderr.
 
-The canonical Python implementation deliberately accepts only plain text input plus model/quality/effort/max-output/raw controls. Tools, structured-output schemas, files/images, `previous_response_id`, and arbitrary Responses API fields remain out of scope until OpenAIQuotaFuse has explicit quota/accounting semantics for them.
+The canonical Python implementation supports plain text input, explicit text context, and named sessions in addition to model/quality/effort/max-output/raw controls. Tools, structured-output schemas, images, and arbitrary Responses API fields remain out of scope until OpenAIQuotaFuse has explicit quota/accounting semantics for them.
 
 Legacy positional `check MODEL TOKENS` and `select TOKENS [MODEL ...]` remain compatible throughout 0.x. The canonical documented forms are long/short options; positional compatibility is planned for removal at 1.0 rather than accumulating indefinitely.
 
