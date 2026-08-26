@@ -46,12 +46,31 @@ A candidate model can be selected only when its group's available capacity is at
 
 ## Model selection
 
-The caller supplies models in preference order. OpenAIQuotaFuse must not invent a quality ranking.
+The caller may supply models in preference order. If omitted, OpenAIQuotaFuse uses the curated defaults in `model-selection.json`.
 
-Example:
+Example preference order:
 
     gpt-5.6-sol
     gpt-5.6-luna
     gpt-5.6-terra
 
 The first candidate whose quota group has sufficient available capacity is selected. If no candidate fits, selection fails without making an inference request.
+
+Future quality profiles such as `high`, `normal`, and `low` should map to explicit curated candidate lists rather than asking another model to classify the request.
+
+## CLI option conventions
+
+Every long-form command-line option must have a short alias. New options are not complete until both forms are documented and tested.
+
+Prefer conventional aliases where possible and keep each alias unambiguous within a command. Planned examples include:
+
+    --quality, -q
+    --input, -i
+    --model, -m
+    --estimated-tokens, -t
+    --max-output-tokens, -o
+    --raw, -r
+    --help, -h
+    --version, -v
+
+The long form is canonical in documentation and scripts where readability matters; the short form is provided for interactive use. Python and Swift APIs should preserve the same concepts even though short CLI aliases do not apply to their native function-call interfaces.
