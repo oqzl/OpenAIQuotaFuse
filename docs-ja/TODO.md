@@ -6,10 +6,23 @@
 
 - [x] `models.json` を広い会計レジストリ、`model-selection.json` を自動選択ポリシーとして分離する。
 - [x] `check` / `select` の long/short option と互換位置引数を用意する。
-- [x] `--model/-m`、`--estimated-tokens/-t`、`--quality/-q` を扱い、既定 quality は `low` とする。
+- [x] `--model/-m`、`--estimated-tokens/-t`、`--quality/-q` を扱う。
+- [x] prompt を持たない `select` の既定 quality は `low` のまま、`run` は prompt-aware な `auto` を既定にする。
 - [x] 無料 quota group とモデル品質・タスク難易度を分離する。
 - [x] 通常の無料 quota では Terra → Luna を優先する。
 - [x] 旧位置引数形式は 0.x の間だけ互換維持し、option 形式を正規形として 1.0 で削除予定とする。
+
+## P0 — `run` の自動 quality 判定
+
+- [x] `run -q auto` を追加し、`run` の既定にする。prompt のない `select` の既定は変更しない。
+- [x] 小さな Luna classifier で通常のモデル選択前に `low` / `high` だけを判定する。
+- [x] 明示 `-q low` / `-q high` / `-m MODEL` を自動判定より優先し、classifier を呼ばない。
+- [x] classifier 自身の `input_tokens + max_output_tokens` を無料 quota に予約してから dispatch する。
+- [x] quality 判定だけのために有料 fallback は使わない。classifier が使えない、または不正出力なら設定済み `low` fallback を使う。
+- [x] classifier と routing の診断を stderr に出す。
+- [x] classifier model / effort / output cap / instructions / fallback を `model-selection.json` に置く。
+- [x] auto→high と明示 override の bypass を mock test する。
+- [ ] easy/hard の代表 prompt fixture を用意し、classifier model/prompt の変更前に精度評価できるようにする。
 
 ## P0 — `run` の E2E フロー
 
@@ -66,14 +79,14 @@
 - [ ] Usage API mock を含む Shell テストを拡充する。
 - [ ] UTC reset、tier、reserve、unknown model、quota 枯渇、candidate fallback を網羅する。
 - [ ] long/short alias と候補順をテストする。
-- [x] input-token counting、input/stdin/raw、reasoning effort、actual usage diagnostics の mock test を追加する。
+- [x] input-token counting、input/stdin/raw、reasoning effort、actual usage diagnostics、自動 quality、明示 override bypass の mock test を追加する。
 - [x] annual paid budget の free-first / fallback / Costs API の外部支出 / cap blocking / persistence / 基本 paid order を mock test する。
 - [ ] annual reset、Costs pagination、legacy ledger migration、concurrent-process lock の境界テストを追加する。
 - [ ] 将来の Python / Swift でも同じ policy fixture を使う。
 
 ## P2
 
-- [ ] Python 3 で共通 policy / registry / reasoning effort / Organization Costs / annual paid budget を実装する。
+- [ ] Python 3 で共通 policy / registry / auto-quality / reasoning effort / Organization Costs / annual paid budget を実装する。
 - [ ] Swift 6 Package で同じ policy を実装する。
 
 ## Design constraints
@@ -82,8 +95,9 @@
 - 有料 fallback は年間上限（既定 `$5` / UTC 暦年）で制限する。
 - Organization Costs を実支出の下限とし、local accounting は reporting-delay window と結果不明 request の guard に使う。
 - 無料 quota のモデル順は quota token あたりの能力、有料 fallback は年間ドル予算内の能力/コストを重視する。
+- `run --quality auto` は、タスク難易度を判定するために別途 quota check 済みの無料推論を1回使ってよい。quality 選択だけのために有料予算は使わない。
+- 明示 `--quality low/high` と `--model` は classifier を呼ばない。
 - `--quality` はモデル選択順、`--effort` は選択されたモデル内の reasoning を制御する。
-- モデル選択のための推論 call は行わない。
 - quota group と quality/task difficulty を混同しない。
 - 現行 OpenAI 一次資料と観測 API 挙動を stale な仮定より優先する。
 - `spec/QUOTA_POLICY.md` を言語非依存の behavioral source of truth とする。
