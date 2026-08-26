@@ -8,6 +8,7 @@
 - [x] `check` / `select` の long/short option と互換位置引数を用意する。
 - [x] `--model/-m`、`--estimated-tokens/-t`、`--quality/-q` を扱い、既定 quality は `low` とする。
 - [x] 無料 quota group とモデル品質・タスク難易度を分離する。
+- [x] Terra と Luna が同じ high-volume の token quota を消費する間は、通常の無料 quota 実行で Terra を Luna より優先する。Luna は将来の有料 fallback で安価な候補として残す。
 - [ ] 旧位置引数形式を将来 Deprecated にするか判断する。
 
 ## P0 — `run` の E2E フロー
@@ -32,7 +33,7 @@
 - [ ] 無料 quota を先に使い、収まらない場合のみ年間 `$5` 未満なら有料実行を許可し、今回の実行で上限を超えるなら BLOCK する。
 - [ ] 年間上限を設定可能にし、既定値を `$5` とする。
 - [ ] 最新 input/output 単価から事前見積し、actual usage が得られれば実績で会計する。
-- [ ] 通常の有料 fallback は `low` 順を優先し、`high` は明示時のみ使う。
+- [ ] 有料 fallback の候補順は無料 quota 用とは分離し、コストを考慮する。通常の有料 fallback では Luna を Terra より先にし、`high` は明示時のみ使う。
 - [ ] 年間累計有料額の正本を決め、公式 API で確実に取れなければ推測せずローカル/明示会計を使う。
 - [ ] 年間リセット境界と永続化形式を定義する。
 - [ ] credit の1年失効は年間上限とは別に扱う。
@@ -54,6 +55,7 @@
 
 - [ ] audit 期限ごとに incentive 対象、quota group、availability/deprecation、pricing を再確認する。
 - [ ] 自動選択候補を新モデルとの比較で再評価する。
+- [ ] 無料 quota の候補順と有料 fallback の候補順を別々に正当化する。token quota 効率とドル単価効率は別目的である。
 - [ ] 自動選択から外した active model も会計レジストリには残す。
 - [ ] 全候補が `models.json` に存在するテストを追加する。
 
@@ -76,6 +78,7 @@
 
 - 無料 quota を常に先に消費する。
 - 有料 fallback は年間上限（既定 `$5`）で制限する。
+- 無料 quota のモデル順は quota token あたりの能力を重視し、有料 fallback のモデル順は年間ドル予算内の能力/コストを重視する。
 - モデル選択のための推論 call は行わない。input-token counting は非推論の Responses API operation として扱う。
 - quota group と quality/task difficulty を混同しない。
 - 現行 OpenAI 一次資料と観測 API 挙動を stale な仮定より優先する。
