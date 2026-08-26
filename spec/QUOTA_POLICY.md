@@ -8,14 +8,21 @@ OpenAIQuotaFuse should normally prevent inference requests that would exceed Ope
 
 The complimentary counter resets at 00:00 UTC every day.
 
-## Current quota classes
+## OpenAI policy data
 
-OpenAI currently documents two shared daily quota groups:
+`models.json` is the repository's machine-readable snapshot of OpenAI's current complimentary-token policy data:
 
-- large-model group: 250,000 tokens/day for usage tiers 1-2; 1,000,000 for tiers 3-5.
-- small-model group: 2,500,000 tokens/day for usage tiers 1-2; 10,000,000 for tiers 3-5.
+- eligible model IDs,
+- each model's shared quota group,
+- per-group daily limits for usage tiers 1-2 and 3-5,
+- the primary-source URL,
+- the date the snapshot was last reviewed.
 
-The model registry is implementation data and must be kept synchronized with OpenAI's current published eligibility list.
+Shell, Python 3, and Swift 6 implementations must read this shared registry rather than duplicating model lists or quota constants in source code.
+
+The registry is not an OpenAI API response and can become stale. Changes to it must be checked against the current OpenAI primary documentation. Runtime scraping of the Help Center is deliberately not part of the quota decision path.
+
+Models explicitly documented as shut down are omitted even if they remain visible in historical offer documentation.
 
 ## Request boundary
 
@@ -23,7 +30,7 @@ If a new request would make the running daily total exceed the relevant quota, O
 
 ## Conservative accounting
 
-The Shell MVP sums all completion usage for currently eligible models in each quota group. This may understate remaining complimentary quota if some eligible-model traffic was not itself eligible for the data-sharing incentive, but it avoids falsely claiming free capacity.
+The Shell MVP sums all completion usage for models registered in each quota group. This may understate remaining complimentary quota if some registered-model traffic was not itself eligible for the data-sharing incentive, but it avoids falsely claiming free capacity.
 
 A future implementation may use a more precise incentive-specific signal if OpenAI exposes one through a stable documented API contract.
 
