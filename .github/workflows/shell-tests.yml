@@ -1,0 +1,16 @@
+name: Shell tests
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+jobs:
+  shell:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Syntax check
+        run: bash -n shell/openai-quota-fuse.sh tests/shell/run-mocked.sh
+      - name: Mocked run test
+        run: bash tests/shell/run-mocked.sh
