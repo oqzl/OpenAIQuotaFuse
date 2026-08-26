@@ -10,20 +10,28 @@ OpenAIQuotaFuse は、OpenAI API の無料トークン枠を安全側に見積�
     cd OpenAIQuotaFuse
     cp .env.example .env
     $EDITOR .env
-    ./shell/openai-quota-fuse.sh run "富士山の高さは？"
+    python3 python/openai_quota_fuse.py run "富士山の高さは？"
 
-必要なのは Bash、curl、jq です。
+Python 3 CLI を移植性の高い推奨実装とし、Codex プラグインからもこれを実行面として使います。Python 標準ライブラリだけで動作します。Unix 環境向けには `./shell/openai-quota-fuse.sh` も reference implementation として残しており、こちらは Bash、curl、jq が必要です。
 
 `OPENAI_ADMIN_KEY` は Organization Usage と Organization Costs の取得だけに使います。Organization Owner は API Platform の Organization settings → Admin keys から作成できます: https://platform.openai.com/settings/organization/admin-keys 。通常の project `OPENAI_API_KEY` は input token 数の取得と推論に使い、Admin key とは分離してください。
+
+## Codex プラグイン
+
+このリポジトリには Codex plugin manifest と bundled `quota-fuse` Skill も含まれます。Codex から quota / costs の確認、policy に沿った model 選択、Fuse policy を通した追加 OpenAI API call の dispatch ができます。
+
+ただし、現在実行中の Codex turn 自体の model を差し替えるものではありません。Fuse が管理するのは、Codex が plugin-facing Python CLI 経由で明示的に dispatch する API call です。
+
+ローカル marketplace への導入方法と使い方は [docs-ja/CODEX_PLUGIN.md](docs-ja/CODEX_PLUGIN.md) を参照してください。
 
 ## モデル選択
 
 `run` の既定 quality は `auto` です。実行前に小さな difficulty classifier を無料 quota 内で実行し、通常タスクは `low`、難しいタスクは `high` に振り分けます。
 
-    ./shell/openai-quota-fuse.sh run "英訳して: おはよう"
+    python3 python/openai_quota_fuse.py run "英訳して: おはよう"
     # quality: auto -> low
 
-    ./shell/openai-quota-fuse.sh run "このリポジトリ全体を設計レビューして大規模リファクタ案を作って"
+    python3 python/openai_quota_fuse.py run "このリポジトリ全体を設計レビューして大規模リファクタ案を作って"
     # quality: auto -> high
 
 classifier は `gpt-5.6-luna` + low reasoning + 最大8 output tokens の小さな判定タスクです。classifier 自身についても `input_tokens + max_output_tokens` を無料 quota に予約できる場合だけ呼びます。classifier が実行できない、または `low` / `high` 以外を返した場合は、有料判定へ fallback せず `low` を使います。
@@ -59,8 +67,8 @@ Terra と Luna は high-volume の無料 token quota を共有するため、無
 
 現在値は次で確認できます。
 
-    ./shell/openai-quota-fuse.sh costs
-    ./shell/openai-quota-fuse.sh costs -r
+    python3 python/openai_quota_fuse.py costs
+    python3 python/openai_quota_fuse.py costs -r
 
 通常表示では `official_costs_usd`、直近の local guard、budget 判定に使う effective spend を分けて表示します。Costs API は 1月1日 00:00 UTC からページングして UTC 暦年全体を集計します。
 
@@ -74,37 +82,39 @@ Terra と Luna は high-volume の無料 token quota を共有するため、無
 
 入力方法:
 
-    ./shell/openai-quota-fuse.sh run "説明して"
-    ./shell/openai-quota-fuse.sh run -i "説明して"
-    printf '%s\n' "説明して" | ./shell/openai-quota-fuse.sh run
-    ./shell/openai-quota-fuse.sh run -i - < prompt.txt
-    ./shell/openai-quota-fuse.sh run -q low "軽い仕事として処理して"
-    ./shell/openai-quota-fuse.sh run -q high "高品質モデルを優先して"
-    ./shell/openai-quota-fuse.sh run -m gpt-5.6-luna -o 256 "一言で説明して"
-    ./shell/openai-quota-fuse.sh run -e high "よく考えて答えて"
-    ./shell/openai-quota-fuse.sh run -r "Responses API の JSON をそのまま返して"
+    python3 python/openai_quota_fuse.py run "説明して"
+    python3 python/openai_quota_fuse.py run -i "説明して"
+    printf '%s\n' "説明して" | python3 python/openai_quota_fuse.py run
+    python3 python/openai_quota_fuse.py run -i - < prompt.txt
+    python3 python/openai_quota_fuse.py run -q low "軽い仕事として処理して"
+    python3 python/openai_quota_fuse.py run -q high "高品質モデルを優先して"
+    python3 python/openai_quota_fuse.py run -m gpt-5.6-luna -o 256 "一言で説明して"
+    python3 python/openai_quota_fuse.py run -e high "よく考えて答えて"
+    python3 python/openai_quota_fuse.py run -r "Responses API の JSON をそのまま返して"
 
 `-q/--quality` は `auto`、`low`、`high`。省略時は `auto` です。`-e/--effort` は Responses API の `reasoning.effort` を指定し、quality とは独立です。quality はモデル選択順、effort は選ばれたモデル内部の推論量を制御します。effort の指定可能値は `none`、`low`、`medium`、`high`、`xhigh`、`max`。省略時はモデル/API の既定値をそのまま使います。
 
 `-r/--raw` では stdout に抽出済み text ではなく Responses API の完全な JSON を出します。classifier の判定、quota/model/usage の診断情報は stderr に出します。
 
-Shell 版 P0 は plain text input と model/quality/effort/max-output/raw に意図的に限定します。tools、structured output schema、files/images、`previous_response_id`、任意の Responses API field を中途半端な generic proxy として通しません。それらは quota/accounting 上の意味を定義してから追加します。
+reference implementation は plain text input と model/quality/effort/max-output/raw に意図的に限定します。tools、structured output schema、files/images、`previous_response_id`、任意の Responses API field は quota/accounting 上の意味を定義するまで非対応です。
 
 旧 positional 形式 `check MODEL TOKENS` と `select TOKENS [MODEL ...]` は 0.x の間は互換維持します。正規形は long/short option とし、positional 互換は 1.0 で削除予定です。
 
 ## 中身を確認したくなったら
 
-    ./shell/openai-quota-fuse.sh status
-    ./shell/openai-quota-fuse.sh costs
-    ./shell/openai-quota-fuse.sh models
-    ./shell/openai-quota-fuse.sh select -t 8000
-    ./shell/openai-quota-fuse.sh check -m gpt-5.6-sol -t 8000
-    ./shell/openai-quota-fuse.sh status -r
+    python3 python/openai_quota_fuse.py status
+    python3 python/openai_quota_fuse.py costs
+    python3 python/openai_quota_fuse.py models
+    python3 python/openai_quota_fuse.py select -t 8000
+    python3 python/openai_quota_fuse.py check -m gpt-5.6-sol -t 8000
+    python3 python/openai_quota_fuse.py status -r
+
+同等の Shell command は `./shell/openai-quota-fuse.sh` から引き続き利用できます。
 
 ## ポリシーと保守
 
 無料枠の会計対象は `models.json`、無料・有料の自動選択方針と classifier 設定は `model-selection.json` に置きます。これらが古くなった場合は現在の OpenAI 一次資料を優先します。
 
-incentive 固有の Usage API 挙動を検証し終えるまでは、登録モデルの Usage をすべて消費として数えます。金額会計は、OpenAI が billing と照合する用途で推奨している Organization Costs を使います。モデルポリシーは `bash scripts/audit-model-policy.sh` と週次 workflow で監査します。
+incentive 固有の Usage API 挙動を検証し終えるまでは、登録モデルの Usage をすべて消費として数えます。金額会計は Organization Costs を使います。モデルポリシーは `bash scripts/audit-model-policy.sh` と週次 workflow で監査します。
 
 言語共通のポリシーは `spec/QUOTA_POLICY.md`、残作業は [docs-ja/TODO.md](docs-ja/TODO.md) を参照してください。
