@@ -35,7 +35,7 @@ Python 3 CLI を正規実装とし、Codex プラグインからもこれを実�
       "分散システムの移行方式を3案比較し、障害時の切り戻しまで含む段階的な移行計画を設計して"
     # quality: auto -> high
 
-classifier は `gpt-5.6-luna` + low reasoning + 最大8 output tokens の小さな判定タスクです。classifier 自身についても `input_tokens + max_output_tokens` を無料 quota に予約できる場合だけ呼びます。input token の計数には `/responses/input_tokens` が受け付ける入力関連フィールドだけを送り、Responses API 本体だけの `max_output_tokens` は送りません。classifier が実行できない、または `low` / `high` 以外を返した場合は、有料判定へ fallback せず `low` を使います。
+classifier は `gpt-5.6-luna` + low reasoning + Responses API の最小値である16 output tokens の小さな判定タスクです。classifier 自身についても `input_tokens + max_output_tokens` を無料 quota に予約できる場合だけ呼びます。input token の計数には `/responses/input_tokens` が受け付ける入力関連フィールドだけを送り、Responses API 本体だけの `max_output_tokens` は送りません。classifier が実行できない、または `low` / `high` 以外を返した場合は、有料判定へ fallback せず `low` を使います。
 
 明示指定は自動判定より優先します。
 
@@ -80,6 +80,8 @@ Terra と Luna は high-volume の無料 token quota を共有するため、無
 推論前に `POST /v1/responses/input_tokens` で input token 数を取得し、次を予約します。
 
     input_tokens + max_output_tokens
+
+`-o/--max-output-tokens` は現在の GPT-5.6 Responses API の範囲である 16〜128,000 tokens をローカルで検証します。範囲外の値は API を呼ぶ前に拒否します。
 
 まず普通に質問する:
 
