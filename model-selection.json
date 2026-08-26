@@ -8,17 +8,22 @@
     "pricing": "https://developers.openai.com/api/docs/pricing"
   },
   "default_candidates": [
-    "gpt-5.6-sol",
     "gpt-5.6-luna",
-    "gpt-5.6-terra"
+    "gpt-5.6-terra",
+    "gpt-5.6-sol"
   ],
-  "default_quality": "default",
+  "default_quality": "low",
   "quality_profiles": {
-    "default": [
+    "low": [
+      "gpt-5.6-luna",
+      "gpt-5.6-terra",
+      "gpt-5.6-sol"
+    ],
+    "high": [
       "gpt-5.6-sol",
       "gpt-5.6-luna",
       "gpt-5.6-terra"
     ]
   },
-  "policy": "Keep accounting coverage broad in models.json, but keep automatic selection candidates intentionally small. Quota groups describe complimentary quota capacity and must not be conflated with model quality or task difficulty. The default_quality/quality_profiles fields are temporary CLI-schema compatibility and do not represent quota classes or supported quality tiers; remove them when the Shell parser is simplified."
+  "policy": "Automatic execution defaults to the low-cost/low-capability profile. Use the high profile explicitly when task quality warrants it. Quota groups describe complimentary quota capacity and are separate from these task-quality profiles."
 }

@@ -27,6 +27,23 @@
 - [ ] `run` に `--max-output-tokens/-o`、`--raw/-r`、`--input/-i`、`--model/-m` を追加する。
 - [ ] tools、structured output、files/images、previous response 等をどこまで受けるか定義する。Shell リファレンス実装を汎用 API wrapper にしすぎない。
 
+## P0 — 年間プリペイド予算（次回開発の最優先）
+
+- [ ] 現在の `run` 対応の次に、最初のフォローアップとして着手する。
+- [ ] API の購入済み prepaid credit を、日次無料 token quota とは別の予算として扱う。
+- [ ] 既定ポリシーは「無料 quota を先に使う。無料 quota で収まらない場合のみ、年間の有料利用額が `$5` 未満なら有料実行を許可し、今回の実行で年間上限を超える場合は BLOCK」とする。
+- [ ] 年間有料利用上限は明示的に設定可能にし、既定値は `$5` とする。無制限の有料フォールバックにはしない。
+- [ ] 実行前に、選択モデルの最新 input/output 単価から今回の有料コストを見積もる。実行後に actual usage が得られた場合は実績値で会計する。
+- [ ] 通常の有料フォールバックでは設定済みの `low` モデル順を優先し、年間予算を保守的に消費する。`high` は呼び出し側が明示した場合だけ使う。
+- [ ] 年間累計有料額の正本を決める。公式 API から確実に取得できるならそれを優先し、無理なら推測せずローカルまたは明示設定による会計を使う。
+- [ ] 年間リセット境界と永続化形式を定義し、CLI の起動ごとに累計が消えないようにする。
+- [ ] 購入済み credit の失効管理は年間上限とは別に扱う。OpenAI の現行仕様では最低購入額は $5、購入済み credit は1年で失効する。
+- [ ] prepaid credit の残高、個々の grant/購入の有効期限、またはそれらを確実に導出できる billing data を公式 API から取得できるか調査する。実行時ポリシーのために Billing UI をスクレイピングしない。
+- [ ] 残高と有効期限を確実に取得できる場合、失効する credit を捨てる代わりに期限前に計画的に消費する optional な credit burn-down policy を設計する。
+- [ ] prepaid credit が存在していても、設定済みの年間上限を暗黙に超えない。例外を許す場合は呼び出し側の明示指定を必須とする。
+- [ ] 有効期限が異なる複数の credit grant/購入がある場合、および OpenAI が明記する billing 反映遅延・negative balance の可能性をどう扱うか定義する。
+- [ ] 有効期限を公式 API から取得できない場合、推測せず、残 prepaid budget と expiry date をユーザー設定として明示的に与える方式を使えるようにする。
+
 ## P1 — 会計ロジックの実環境検証
 
 - [x] 実 Admin API key で、Usage 0 のケースについて `status --raw` をライブ検証した。日次 bucket が期待通り `results: []` を返すことを確認済み。
@@ -34,15 +51,6 @@
 - [ ] 実際の `service_tier` を確認し、Usage API だけで incentive 対象トラフィックを十分確実に識別できるか判断する。
 - [ ] 検証が終わるまでは、登録済み対象モデルの Usage をすべて消費として数え、無料残量を過大評価しない。
 - [ ] secret や organization identifier を除去した Usage API レスポンス例を記録する。
-
-## P1 — 期限付きプリペイドクレジット
-
-- [ ] API の購入済み prepaid credit を、日次無料 token quota とは別の予算として扱う。OpenAI の現行仕様では最低購入額は $5、購入済み credit は1年で失効する。
-- [ ] prepaid credit の残高、個々の grant/購入の有効期限、またはそれらを確実に導出できる billing data を公式 API から取得できるか調査する。実行時ポリシーのために Billing UI をスクレイピングしない。
-- [ ] 残高と有効期限を確実に取得できる場合、失効する credit を捨てる代わりに期限前に計画的に消費する optional な credit burn-down policy を設計する。
-- [ ] burn-down は opt-in かつ上限付きとする。prepaid credit が存在するという理由だけで有料利用を暗黙に許可しない。
-- [ ] 有効期限が異なる複数の credit grant/購入がある場合、および OpenAI が明記する billing 反映遅延・negative balance の可能性をどう扱うか定義する。
-- [ ] 有効期限を公式 API から取得できない場合、推測せず、残 prepaid budget と expiry date をユーザー設定として明示的に与える方式を検討する。
 
 ## P1 — モデルポリシー保守
 
@@ -58,7 +66,8 @@
 - [ ] UTC 日次リセット、tier 1–2 / tier 3–5、reserve 計算、未知モデル、quota 枯渇、候補フォールバックを網羅する。
 - [ ] long/short alias と明示的な候補順指定をテストする。
 - [ ] `run` を既定経路として文書化する前に、input-token counting と `run` の mock テストを追加する。
-- [ ] 期限付き prepaid credit を実装する場合、既定OFF、有効期限境界、予算上限、billing metadata を取得できない場合を含む burn-down policy のテストを追加する。
+- [ ] 年間有料予算のテストを追加する。無料 quota 優先、上限未満での有料フォールバック、今回の実行で上限超過する場合の BLOCK、年間リセット、永続化、明示 `high` を含める。
+- [ ] prepaid credit の expiry/burn-down を実装する場合、有効期限境界と billing metadata 取得不能時を含むテストを追加する。
 - [ ] 将来の Python / Swift 実装でも同じ policy fixture を利用する。
 
 ## P2 — Python 3 実装
@@ -77,7 +86,8 @@
 
 ## 設計上の制約
 
-- 原則として、無料枠利用率の最大化より意図しない有料利用の回避を優先する。ただし、呼び出し側が上限付き prepaid-credit burn-down policy を明示的に有効化した場合は例外とする。
+- 無料 quota を常に先に使う。
+- 有料フォールバックは設定済み年間上限で必ず制限する。既定は年 `$5`。
 - モデル選択のためだけに推論を1回追加してはならない。
 - 無料 quota group をモデル品質やタスク難易度の profile として表現しない。
 - 最新の OpenAI 一次資料と実 API の観測結果を、古いリポジトリ上の仮定より優先する。
