@@ -12,7 +12,7 @@ OpenAIQuotaFuse is a quota guard for calling the OpenAI API while conservatively
     $EDITOR .env
     python3 python/openai_quota_fuse.py run "How high is Mount Fuji?"
 
-The Python 3 CLI is the preferred portable implementation and the execution surface used by the Codex plugin. It uses only the Python standard library. The Shell reference remains available at `./shell/openai-quota-fuse.sh` for Unix environments and requires Bash, curl, and jq.
+The Python 3 CLI is the canonical implementation and the execution surface used by the Codex plugin. It uses only the Python standard library. Unix users can also call `./shell/openai-quota-fuse.sh`; it is a thin Bash compatibility wrapper that delegates to the same Python CLI, so it requires Bash and Python 3 but does not maintain separate quota logic.
 
 `OPENAI_ADMIN_KEY` is used only for Organization Usage and Costs. Organization Owners can create an Admin API key from the API Platform dashboard under Organization settings → Admin keys: https://platform.openai.com/settings/organization/admin-keys . Keep it separate from the normal project `OPENAI_API_KEY`, which is used for input-token counting and inference.
 
@@ -94,7 +94,7 @@ Examples:
 
 `-r/--raw` changes stdout from extracted output text to the complete Responses API JSON. Classifier, quota, model, and usage diagnostics remain on stderr.
 
-The reference implementations deliberately accept only plain text input plus model/quality/effort/max-output/raw controls. Tools, structured-output schemas, files/images, `previous_response_id`, and arbitrary Responses API fields remain out of scope until OpenAIQuotaFuse has explicit quota/accounting semantics for them.
+The canonical Python implementation deliberately accepts only plain text input plus model/quality/effort/max-output/raw controls. Tools, structured-output schemas, files/images, `previous_response_id`, and arbitrary Responses API fields remain out of scope until OpenAIQuotaFuse has explicit quota/accounting semantics for them.
 
 Legacy positional `check MODEL TOKENS` and `select TOKENS [MODEL ...]` remain compatible throughout 0.x. The canonical documented forms are long/short options; positional compatibility is planned for removal at 1.0 rather than accumulating indefinitely.
 
@@ -107,12 +107,12 @@ Legacy positional `check MODEL TOKENS` and `select TOKENS [MODEL ...]` remain co
     python3 python/openai_quota_fuse.py check -m gpt-5.6-sol -t 8000
     python3 python/openai_quota_fuse.py status -r
 
-The equivalent Shell commands remain available through `./shell/openai-quota-fuse.sh`.
+The equivalent Shell entry point remains available through `./shell/openai-quota-fuse.sh`; it delegates directly to the Python CLI.
 
 ## Policy and maintenance
 
 Eligible models and quota-group limits live in `models.json`; curated complimentary/paid selection and classifier policy live in `model-selection.json`. Current OpenAI primary documentation takes precedence over these snapshots when they become stale.
 
-The implementations deliberately count all usage on registered models until incentive-specific Usage API behavior is validated. Organization Costs is used for financial accounting because OpenAI recommends the Costs endpoint for spend that should reconcile to billing. `bash scripts/audit-model-policy.sh` checks model-policy review age; the GitHub workflow also runs weekly.
+The canonical implementation deliberately counts all usage on registered models until incentive-specific Usage API behavior is validated. Organization Costs is used for financial accounting because OpenAI recommends the Costs endpoint for spend that should reconcile to billing. `bash scripts/audit-model-policy.sh` checks model-policy review age; the GitHub workflow also runs weekly.
 
 See `spec/QUOTA_POLICY.md` for language-neutral policy and [docs/TODO.md](docs/TODO.md) for remaining work.
