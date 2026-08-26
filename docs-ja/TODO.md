@@ -41,6 +41,10 @@
 - [x] repeatable な `--context/-c FILE` で明示 UTF-8 text context を渡し、その全体を token count に含める。
 - [x] named `--session/-s NAME` で最新 response ID を保存し、次回の token count と本推論の両方へ `previous_response_id` を渡す。
 - [x] 対応 scope を plain text、明示 text context、named session、model/quality/effort/max-output/raw に限定する。tools / structured output / images / 任意 field / directory 再帰 / 暗黙 file upload は quota/cost semantics を定義するまで非対応とする。
+- [ ] `status=incomplete` を通常成功と区別して扱い、`incomplete_details.reason` と reasoning/visible token の診断を明示し、途中で切れた出力を通常完了に見せない。
+- [ ] incomplete response を明示的に継続する `continue [RESPONSE_ID]` を追加する。ID 省略時は `max_output_tokens` で incomplete になった直近 response をローカル state から使用する。
+- [ ] continuation も通常 request と同じ `/responses/input_tokens` 会計、無料 quota 予約、モデル選択、paid-budget fuse を必ず通す。ユーザー操作なしの自動 continuation は行わない。
+- [ ] incomplete 検出、continuation state 保存、response ID の明示/省略、continuation の quota/budget BLOCK を mocked E2E で検証する。
 
 ## P0 — 年間プリペイド予算
 
