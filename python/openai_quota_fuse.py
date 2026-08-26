@@ -8,6 +8,7 @@ import json
 import os
 from pathlib import Path
 import random
+import re
 import sys
 import tempfile
 import time
@@ -26,6 +27,7 @@ REPO_ROOT = Path(__file__).resolve().parents[1]
 DEFAULT_MODELS_FILE = REPO_ROOT / "models.json"
 DEFAULT_SELECTION_FILE = REPO_ROOT / "model-selection.json"
 LOCAL_COST_GUARD_SECONDS = 7 * 24 * 60 * 60
+SESSION_NAME_RE = re.compile(r"^[A-Za-z0-9._-]+$")
 
 
 class FuseError(RuntimeError):
@@ -46,7 +48,7 @@ def load_env_file() -> None:
         "OPENAI_ADMIN_KEY", "OPENAI_API_KEY", "OPENAI_USAGE_TIER",
         "OPENAI_QUOTA_RESERVE_PERCENT", "OPENAI_QUOTA_FUSE_MODELS_FILE",
         "OPENAI_QUOTA_FUSE_SELECTION_FILE", "OPENAI_ANNUAL_PAID_BUDGET_USD",
-        "OPENAI_QUOTA_FUSE_PAID_LEDGER",
+        "OPENAI_QUOTA_FUSE_PAID_LEDGER", "OPENAI_QUOTA_FUSE_SESSION_DIR",
     }
     for raw in path.read_text(encoding="utf-8").splitlines():
         line = raw.strip()
@@ -84,12 +86,63 @@ def selection_file() -> Path:
     return Path(os.environ.get("OPENAI_QUOTA_FUSE_SELECTION_FILE", DEFAULT_SELECTION_FILE))
 
 
+def state_root() -> Path:
+    return Path(os.environ.get("XDG_STATE_HOME", Path.home() / ".local/state")) / "openai-quota-fuse"
+
+
 def paid_ledger_file() -> Path:
     configured = os.environ.get("OPENAI_QUOTA_FUSE_PAID_LEDGER")
     if configured:
         return Path(configured).expanduser()
-    state = Path(os.environ.get("XDG_STATE_HOME", Path.home() / ".local/state"))
-    return state / "openai-quota-fuse" / "paid-usage.json"
+    return state_root() / "paid-usage.json"
+
+
+def session_dir() -> Path:
+    configured = os.environ.get("OPENAI_QUOTA_FUSE_SESSION_DIR")
+    return Path(configured).expanduser() if configured else state_root() / "sessions"
+
+
+def session_file(name: str) -> Path:
+    if name in {".", ".."} or not SESSION_NAME_RE.fullmatch(name):
+        raise FuseError("session name may contain only letters, digits, '.', '_', and '-'")
+    return session_dir() / f"{name}.json"
+
+
+def load_session_response_id(name: str | None) -> str | None:
+    if not name:
+        return None
+    path = session_file(name)
+    if not path.exists():
+        return None
+    data = read_json(path)
+    response_id = data.get("response_id")
+    if not isinstance(response_id, str) or not response_id:
+        raise FuseError(f"invalid session state: {path}")
+    return response_id
+
+
+def save_session_response_id(name: str | None, response: dict[str, Any]) -> None:
+    if not name:
+        return
+    response_id = response.get("id")
+    if not isinstance(response_id, str) or not response_id:
+        eprint(f"warning: session {name!r} not updated because response id is missing")
+        return
+    path = session_file(name)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    data = {
+        "schema_version": 1,
+        "response_id": response_id,
+        "updated_at": dt.datetime.now(dt.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
+    }
+    try:
+        with tempfile.NamedTemporaryFile("w", encoding="utf-8", dir=path.parent, delete=False) as fh:
+            json.dump(data, fh, indent=2, sort_keys=True)
+            fh.write("\n")
+            tmp = Path(fh.name)
+        tmp.replace(path)
+    except OSError as exc:
+        eprint(f"warning: failed to update session {name!r}: {exc}")
 
 
 def registries() -> tuple[dict[str, Any], dict[str, Any]]:
@@ -213,10 +266,23 @@ def select_model(tokens: int, quality: str, models: dict[str, Any], selection: d
     raise FuseError("no candidate model has enough complimentary quota", 4)
 
 
-def request_payload(model: str, prompt: str, max_output: int, effort: str | None = None) -> dict[str, Any]:
-    payload: dict[str, Any] = {"model": model, "input": prompt, "max_output_tokens": max_output}
+def request_payload(model: str, input_text: str, max_output: int, effort: str | None = None,
+                    previous_response_id: str | None = None) -> dict[str, Any]:
+    payload: dict[str, Any] = {"model": model, "input": input_text, "max_output_tokens": max_output}
     if effort:
         payload["reasoning"] = {"effort": effort}
+    if previous_response_id:
+        payload["previous_response_id"] = previous_response_id
+    return payload
+
+
+def input_token_payload(model: str, input_text: str, *, instructions: str | None = None,
+                        previous_response_id: str | None = None) -> dict[str, Any]:
+    payload: dict[str, Any] = {"model": model, "input": input_text}
+    if instructions:
+        payload["instructions"] = instructions
+    if previous_response_id:
+        payload["previous_response_id"] = previous_response_id
     return payload
 
 
@@ -242,18 +308,21 @@ def count_input_tokens(payload: dict[str, Any]) -> int:
 def classify_quality(prompt: str, models: dict[str, Any], selection: dict[str, Any]) -> str:
     cfg = selection["auto_quality"]
     fallback = str(cfg["fallback_quality"])
-    payload = {
+    response_payload = {
         "model": cfg["classifier_model"], "input": prompt, "instructions": cfg["instructions"],
         "max_output_tokens": int(cfg["max_output_tokens"]),
         "reasoning": {"effort": cfg["reasoning_effort"]},
     }
     try:
-        input_tokens = count_input_tokens(payload)
+        count_payload = input_token_payload(
+            str(cfg["classifier_model"]), prompt, instructions=str(cfg["instructions"])
+        )
+        input_tokens = count_input_tokens(count_payload)
         required = input_tokens + int(cfg["max_output_tokens"])
         allowed, _, _ = check_model(str(cfg["classifier_model"]), required, models)
         if not allowed:
             raise FuseError("classifier has no complimentary quota", 4)
-        response = api_json("POST", RESPONSES_URL, os.environ["OPENAI_API_KEY"], payload=payload)
+        response = api_json("POST", RESPONSES_URL, os.environ["OPENAI_API_KEY"], payload=response_payload)
         value = "".join(ch for ch in output_text(response).lower().splitlines()[0] if ch.isalpha())
         if value not in {"low", "high"}:
             raise FuseError("classifier returned invalid result", 5)
@@ -263,6 +332,27 @@ def classify_quality(prompt: str, models: dict[str, Any], selection: dict[str, A
     except (FuseError, IndexError) as exc:
         eprint(f"warning: auto quality classifier unavailable ({exc}); using {fallback}")
         return fallback
+
+
+def read_contexts(paths: list[str]) -> str:
+    parts: list[str] = []
+    for raw in paths:
+        path = Path(raw).expanduser()
+        if not path.is_file():
+            raise FuseError(f"context is not a readable file: {raw}")
+        try:
+            text = path.read_text(encoding="utf-8")
+        except (OSError, UnicodeError) as exc:
+            raise FuseError(f"failed to read context {raw}: {exc}") from exc
+        parts.append(f"Context file: {raw}\n---\n{text}\n---")
+    return "\n\n".join(parts)
+
+
+def compose_input(prompt: str, context_paths: list[str]) -> str:
+    context = read_contexts(context_paths)
+    if not context:
+        return prompt
+    return f"{context}\n\nUser request:\n{prompt}"
 
 
 def price_estimate(model: str, input_tokens: int, output_tokens: int, selection: dict[str, Any]) -> float:
@@ -391,11 +481,14 @@ def emit_response(response: dict[str, Any], raw: bool) -> None:
     print(json.dumps(response, indent=2, ensure_ascii=False) if raw else output_text(response))
 
 
-def run_paid(prompt: str, quality: str, explicit: str | None, max_output: int, raw: bool, effort: str | None,
-             selection: dict[str, Any]) -> int:
+def run_paid(input_text: str, quality: str, explicit: str | None, max_output: int, raw: bool,
+             effort: str | None, selection: dict[str, Any], previous_response_id: str | None,
+             session: str | None) -> int:
     with ledger_lock():
         model = explicit or candidates(selection, quality, paid=True)[0]
-        input_tokens = count_input_tokens({"model": model, "input": prompt})
+        input_tokens = count_input_tokens(input_token_payload(
+            model, input_text, previous_response_id=previous_response_id
+        ))
         estimate = price_estimate(model, input_tokens, max_output, selection)
         cap = float(os.environ.get("OPENAI_ANNUAL_PAID_BUDGET_USD", selection["paid_fallback"]["default_annual_budget_usd"]))
         spent = effective_paid_spent()
@@ -407,13 +500,17 @@ def run_paid(prompt: str, quality: str, explicit: str | None, max_output: int, r
         if effort:
             eprint(f"reasoning effort: {effort}")
         try:
-            response = api_json("POST", RESPONSES_URL, os.environ["OPENAI_API_KEY"], payload=request_payload(model, prompt, max_output, effort))
+            response = api_json(
+                "POST", RESPONSES_URL, os.environ["OPENAI_API_KEY"],
+                payload=request_payload(model, input_text, max_output, effort, previous_response_id),
+            )
         except FuseError:
             eprint("warning: paid reservation retained because inference outcome is unknown")
             raise
         usage = response.get("usage", {})
         actual = price_estimate(model, int(usage.get("input_tokens") or 0), int(usage.get("output_tokens") or 0), selection)
         complete_paid(request_id, actual)
+        save_session_response_id(session, response)
         emit_response(response, raw)
     return 0
 
@@ -433,13 +530,21 @@ def cmd_run(args: argparse.Namespace, models: dict[str, Any], selection: dict[st
         raise FuseError("max output tokens must be a positive integer")
     if args.effort and args.effort not in {"none", "low", "medium", "high", "xhigh", "max"}:
         raise FuseError("effort must be one of: none, low, medium, high, xhigh, max")
+
+    input_text = compose_input(prompt, args.context)
+    previous_response_id = load_session_response_id(args.session)
+    if args.session:
+        eprint(f"session: {args.session} ({'continue' if previous_response_id else 'new'})")
+
     quality = args.quality or selection.get("default_run_quality", selection["default_quality"])
     if quality == "auto":
         quality = selection["auto_quality"]["fallback_quality"] if args.model else classify_quality(prompt, models, selection)
     elif quality not in {"low", "high"}:
         raise FuseError("run quality must be one of: auto, low, high")
     first = args.model or candidates(selection, quality)[0]
-    input_tokens = count_input_tokens({"model": first, "input": prompt})
+    input_tokens = count_input_tokens(input_token_payload(
+        first, input_text, previous_response_id=previous_response_id
+    ))
     required = input_tokens + args.max_output_tokens
     if args.model:
         allowed, _, _ = check_model(first, required, models)
@@ -452,18 +557,27 @@ def cmd_run(args: argparse.Namespace, models: dict[str, Any], selection: dict[st
                 raise
             model = None
         if model and model != first:
-            input_tokens = count_input_tokens({"model": model, "input": prompt})
+            input_tokens = count_input_tokens(input_token_payload(
+                model, input_text, previous_response_id=previous_response_id
+            ))
             required = input_tokens + args.max_output_tokens
             allowed, _, _ = check_model(model, required, models)
             if not allowed:
                 model = None
     if model is None:
-        return run_paid(prompt, quality, args.model, args.max_output_tokens, args.raw, args.effort, selection)
+        return run_paid(
+            input_text, quality, args.model, args.max_output_tokens, args.raw, args.effort,
+            selection, previous_response_id, args.session,
+        )
     eprint(f"quota: OK (input={input_tokens} + max_output={args.max_output_tokens} => reserve={required} tokens)")
     eprint(f"model: {model}")
     if args.effort:
         eprint(f"reasoning effort: {args.effort}")
-    response = api_json("POST", RESPONSES_URL, os.environ["OPENAI_API_KEY"], payload=request_payload(model, prompt, args.max_output_tokens, args.effort))
+    response = api_json(
+        "POST", RESPONSES_URL, os.environ["OPENAI_API_KEY"],
+        payload=request_payload(model, input_text, args.max_output_tokens, args.effort, previous_response_id),
+    )
+    save_session_response_id(args.session, response)
     emit_response(response, args.raw)
     return 0
 
@@ -480,6 +594,8 @@ def build_parser() -> argparse.ArgumentParser:
     run.add_argument("-e", "--effort")
     run.add_argument("-o", "--max-output-tokens", type=int, default=1024)
     run.add_argument("-r", "--raw", action="store_true")
+    run.add_argument("-c", "--context", action="append", default=[], metavar="FILE")
+    run.add_argument("-s", "--session", metavar="NAME")
     status = sub.add_parser("status"); status.add_argument("-r", "--raw", action="store_true")
     costs = sub.add_parser("costs"); costs.add_argument("-r", "--raw", action="store_true")
     check = sub.add_parser("check"); check.add_argument("model_pos", nargs="?"); check.add_argument("tokens_pos", nargs="?", type=int); check.add_argument("-m", "--model"); check.add_argument("-t", "--estimated-tokens", type=int)
