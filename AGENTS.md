@@ -12,11 +12,14 @@ OpenAIQuotaFuse keeps OpenAI API usage inside the complimentary daily token quot
 
 ## Implementations
 
-- `shell/`: dependency-light reference CLI (`bash`, `curl`, `jq`).
-- `python/`: Python 3 implementation (planned).
+- `shell/`: dependency-light Unix reference CLI (`bash`, `curl`, `jq`).
+- `python/`: Python 3 CLI and the preferred execution surface for the Codex plugin; use the standard library unless a dependency clearly reduces total complexity.
 - `swift/`: Swift 6 package (planned).
+- `.codex-plugin/` + `skills/`: Codex plugin metadata and instructions. Keep policy arithmetic in the implementations/registries rather than duplicating it in prompts.
 
 The language-neutral policy in `spec/QUOTA_POLICY.md` takes precedence over implementation-specific behavior.
+
+The Codex plugin can govern secondary OpenAI API calls explicitly dispatched through OpenAIQuotaFuse. Do not claim that a Skill can change the model or reasoning effort already running the current Codex turn.
 
 ## Documentation and TODO synchronization
 
