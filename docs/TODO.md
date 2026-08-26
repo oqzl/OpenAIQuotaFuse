@@ -27,6 +27,23 @@ This document tracks implementation work that remained after PR #1 established t
 - [ ] Add `--max-output-tokens/-o`, `--raw/-r`, `--input/-i`, and `--model/-m` to `run`.
 - [ ] Define behavior for tools, structured output, files/images, previous responses, and other Responses API fields without turning the Shell reference into a generic API wrapper prematurely.
 
+## P0 — Annual prepaid-credit budget (next development priority)
+
+- [ ] Implement this as the first follow-up after the current `run` work.
+- [ ] Treat purchased API prepaid credits as a separate budget from complimentary daily token quota.
+- [ ] Default policy: use complimentary quota first; when complimentary quota cannot cover the request, allow paid execution only while the configured annual paid-use budget remains below `$5`; block once the annual cap would be exceeded.
+- [ ] Keep the annual paid-use budget explicitly configurable, with `$5` as the intended default policy rather than an unbounded paid fallback.
+- [ ] Estimate the paid cost of a request using the selected model's current API input/output pricing before execution, and account actual usage after execution when available.
+- [ ] Prefer the configured `low` model order for ordinary paid fallback so the annual budget is consumed conservatively; explicit `high` remains caller-controlled.
+- [ ] Determine the source of truth for year-to-date paid spend. Prefer an official API; if it cannot be derived reliably, use explicit local/configured accounting rather than guessing.
+- [ ] Define the annual reset boundary and persistence format so usage is not reset accidentally between CLI invocations.
+- [ ] Keep purchased-credit expiry handling separate from the annual cap: OpenAI currently documents a $5 minimum purchase and a one-year expiry for purchased credits.
+- [ ] Determine whether an official API exposes prepaid-credit balance, individual grant/purchase expiry, or enough billing data to derive them reliably. Do not scrape the billing UI for runtime policy decisions.
+- [ ] If balance and expiry can be obtained reliably, design an optional credit burn-down policy so prepaid credit that would otherwise expire can be deliberately consumed before expiry.
+- [ ] Never silently exceed the configured annual cap, even when prepaid credit exists. Any exception must be explicitly enabled by the caller.
+- [ ] Define behavior for multiple credit grants/purchases with different expiry dates and for OpenAI's documented delayed billing / possible negative balance behavior.
+- [ ] If expiry cannot be retrieved through a supported API, allow explicit user configuration of remaining prepaid budget and expiry date rather than guessing.
+
 ## P1 — Accounting validation
 
 - [x] Perform a live `status --raw` validation with a real Admin API key for the zero-usage case; the observed daily bucket returned `results: []` as expected.
@@ -34,15 +51,6 @@ This document tracks implementation work that remained after PR #1 established t
 - [ ] Inspect actual `service_tier` values and determine whether the Usage API can distinguish incentive-covered traffic reliably enough to tighten accounting.
 - [ ] Until validated, continue counting all usage on registered eligible models so remaining complimentary capacity is never overstated.
 - [ ] Document observed Usage API response examples with secrets and organization identifiers removed.
-
-## P1 — Expiring prepaid credits
-
-- [ ] Treat purchased API prepaid credits as a separate budget from complimentary daily token quota. OpenAI currently documents a $5 minimum purchase and a one-year expiry for purchased credits.
-- [ ] Determine whether an official API exposes prepaid-credit balance, individual grant/purchase expiry, or enough billing data to derive them reliably. Do not scrape the billing UI for runtime policy decisions.
-- [ ] If balance and expiry can be obtained reliably, design an optional credit burn-down policy so prepaid credit that would otherwise expire can be deliberately consumed before expiry instead of enforcing a strict zero-paid-usage policy.
-- [ ] Keep burn-down opt-in and bounded. Never silently enable paid usage merely because prepaid credit exists.
-- [ ] Define behavior for multiple credit grants/purchases with different expiry dates and for OpenAI's documented delayed billing / possible negative balance behavior.
-- [ ] If expiry cannot be retrieved through a supported API, consider explicit user configuration such as remaining prepaid budget and expiry date rather than guessing.
 
 ## P1 — Model policy maintenance
 
@@ -58,7 +66,8 @@ This document tracks implementation work that remained after PR #1 established t
 - [ ] Cover UTC day reset, tier 1–2 vs tier 3–5 limits, reserve calculation, unknown models, exhausted groups, and candidate fallback.
 - [ ] Cover long/short CLI aliases and explicit candidate ordering.
 - [ ] Add mocked tests for input-token counting and `run` before making `run` the documented default path.
-- [ ] Add burn-down policy tests if expiring prepaid-credit support is implemented, including disabled-by-default, expiry boundary, budget cap, and unavailable billing metadata.
+- [ ] Add annual paid-budget tests: free-quota-first behavior, below-cap paid fallback, request-would-exceed-cap blocking, annual reset, persistence, and explicit `high` selection.
+- [ ] Add prepaid-credit expiry/burn-down tests if expiry support is implemented, including expiry boundary and unavailable billing metadata.
 - [ ] Run the same policy fixtures against future Python and Swift implementations.
 
 ## P2 — Python 3 implementation
@@ -77,7 +86,8 @@ This document tracks implementation work that remained after PR #1 established t
 
 ## Design constraints
 
-- Avoiding accidental paid usage takes precedence over maximizing free-quota utilization unless the caller explicitly enables a bounded prepaid-credit burn-down policy.
+- Complimentary quota is always consumed first.
+- Paid fallback is bounded by the configured annual paid-use cap; the intended default is `$5` per year.
 - Quota checks must not spend an inference call merely to decide which model to use.
 - Complimentary quota groups must not be presented as model-quality or task-difficulty profiles.
 - Current OpenAI primary documentation and observed API behavior take precedence over stale repository assumptions.
