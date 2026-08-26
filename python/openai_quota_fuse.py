@@ -518,8 +518,25 @@ def complete_paid(request_id: str, actual: float) -> None:
 
 
 def emit_response(response: dict[str, Any], raw: bool) -> None:
-    usage = response.get("usage", {})
-    eprint(f"usage: input={usage.get('input_tokens', '?')} output={usage.get('output_tokens', '?')} total={usage.get('total_tokens', '?')}")
+    usage = response.get("usage", {}) or {}
+    output = usage.get("output_tokens")
+    details = usage.get("output_tokens_details", {}) or {}
+    reasoning = details.get("reasoning_tokens")
+    visible: int | str = "?"
+    if isinstance(output, (int, float)) and isinstance(reasoning, (int, float)):
+        visible = max(0, int(output) - int(reasoning))
+    output_label = str(output if output is not None else "?")
+    if reasoning is not None:
+        output_label += f" (reasoning={reasoning}, visible={visible})"
+    eprint(
+        f"usage: input={usage.get('input_tokens', '?')} output={output_label} "
+        f"total={usage.get('total_tokens', '?')}"
+    )
+    status = response.get("status")
+    incomplete = response.get("incomplete_details") or {}
+    reason = incomplete.get("reason") if isinstance(incomplete, dict) else None
+    if status == "incomplete" or reason:
+        eprint(f"warning: response incomplete{f' ({reason})' if reason else ''}")
     print(json.dumps(response, indent=2, ensure_ascii=False) if raw else output_text(response))
 
 
