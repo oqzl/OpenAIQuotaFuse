@@ -1,0 +1,27 @@
+{
+  "name": "openai-quota-fuse",
+  "version": "0.10.0",
+  "description": "Cost-aware OpenAI API quota and model-selection policy for Codex workflows.",
+  "author": {"name": "oqzl", "url": "https://github.com/oqzl"},
+  "homepage": "https://github.com/oqzl/OpenAIQuotaFuse",
+  "repository": "https://github.com/oqzl/OpenAIQuotaFuse",
+  "license": "MIT",
+  "keywords": ["openai", "codex", "quota", "cost", "routing", "model-selection"],
+  "skills": "./skills/",
+  "interface": {
+    "displayName": "OpenAI Quota Fuse",
+    "shortDescription": "Guard OpenAI API quota and paid fallback from Codex",
+    "longDescription": "Use OpenAIQuotaFuse from Codex workflows to inspect complimentary quota and costs, choose a policy-approved model, and run secondary OpenAI API requests through a conservative annual paid fallback.",
+    "developerName": "oqzl",
+    "category": "Developer Tools",
+    "capabilities": ["Interactive", "Read", "Write"],
+    "websiteURL": "https://github.com/oqzl/OpenAIQuotaFuse",
+    "defaultPrompt": [
+      "Use Quota Fuse for this OpenAI API call.",
+      "Check my OpenAI API quota before running this.",
+      "Choose a cost-aware model for this task."
+    ],
+    "brandColor": "#111111",
+    "screenshots": []
+  }
+}
