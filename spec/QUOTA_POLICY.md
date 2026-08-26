@@ -10,13 +10,15 @@ The complimentary counter resets at 00:00 UTC every day.
 
 ## OpenAI policy data
 
-`models.json` is the broad accounting registry for eligible model IDs, shared quota groups, tier limits, source, and review date. `model-selection.json` contains the smaller curated automatic-selection policy, paid fallback order, and reviewed prices used for request reservations.
+`models.json` is the broad accounting registry for eligible model IDs, shared quota groups, tier limits, source, and review date. `model-selection.json` contains the smaller curated automatic-selection policy, automatic quality classifier policy, paid fallback order, and reviewed prices used for request reservations.
 
 Runtime scraping of OpenAI documentation or Billing UI is not part of quota decisions. Current OpenAI primary documentation takes precedence when the checked-in snapshot is stale.
 
 ## Request boundary
 
 A request must reserve enough capacity for the whole request. For `run`, input tokens are counted with `POST /v1/responses/input_tokens` and `max_output_tokens` is added before inference.
+
+Internal automatic-quality classification is a separate request and must independently reserve its own counted input tokens plus classifier `max_output_tokens` before dispatch.
 
 ## Conservative complimentary accounting
 
@@ -26,15 +28,39 @@ A configurable percentage of each daily quota is unavailable as a safety reserve
 
     available = max(0, quota - accounted_usage - safety_reserve)
 
+## Automatic run quality
+
+`run` defaults to `quality=auto`. `select` remains `low` by default because `select` has no prompt from which to classify task difficulty.
+
+For `run` auto quality, OpenAIQuotaFuse may issue one small classifier request before ordinary model selection. The checked-in policy currently uses:
+
+    classifier model: gpt-5.6-luna
+    reasoning effort: low
+    max output tokens: 8
+    allowed output: low | high
+    fallback: low
+
+The classifier is instructed to choose `high` for work that materially benefits from stronger model routing, including substantial multi-step reasoning, architecture/design judgment, nontrivial debugging or root-cause analysis, broad repository/code changes, several interacting constraints, mathematical/logical verification, or consequential comparison/judgment. Straightforward extraction, translation, summarization, formatting, known procedures, and small/local edits should remain `low`.
+
+The classifier itself is quota-checked. Its input is counted with `/responses/input_tokens`, classifier max output is added, and the request is sent only when that reservation fits complimentary quota. Automatic classification never uses annual paid fallback merely to decide quality. If token counting fails, complimentary classifier quota is unavailable, the classifier request fails, or the classifier output is not exactly `low` or `high`, the configured fallback quality is used.
+
+Explicit caller intent wins over automatic classification:
+
+- `run -q low` bypasses classification and uses `low`.
+- `run -q high` bypasses classification and uses `high`.
+- `run -m MODEL` bypasses classification because model selection is already explicit.
+
+Classifier routing diagnostics are written to stderr and do not replace the user's normal response on stdout.
+
 ## Complimentary model selection
 
-Default `low`:
+Resolved `low`:
 
     gpt-5.6-terra
     gpt-5.6-luna
     gpt-5.6-sol
 
-Explicit `high`:
+Resolved `high`:
 
     gpt-5.6-sol
     gpt-5.6-terra
@@ -46,14 +72,14 @@ Complimentary ordering optimizes capability per shared quota token rather than A
 
 `run --effort/-e` maps directly to Responses API `reasoning.effort`. It is independent from `--quality/-q`:
 
-- `quality` selects the model preference order.
+- `quality` determines model preference order, either explicitly or after auto classification.
 - `effort` controls reasoning behavior inside the selected model.
 
-Supported values are `none`, `low`, `medium`, `high`, `xhigh`, and `max`. When omitted, OpenAIQuotaFuse omits `reasoning.effort` from the request so the current model/API default remains authoritative.
+Supported values are `none`, `low`, `medium`, `high`, `xhigh`, and `max`. When omitted, OpenAIQuotaFuse omits `reasoning.effort` from the user request so the current model/API default remains authoritative. The internal classifier has its own separately configured reasoning effort.
 
 ## Annual paid fallback
 
-Paid fallback is separate from complimentary quota and is attempted only after the complimentary path cannot fit the request. `OPENAI_ANNUAL_PAID_BUDGET_USD` controls the hard application cap; the default is `$5`, and `0` disables paid fallback.
+Paid fallback is separate from complimentary quota and is attempted only after the complimentary path cannot fit the user request. `OPENAI_ANNUAL_PAID_BUDGET_USD` controls the hard application cap; the default is `$5`, and `0` disables paid fallback.
 
 Default paid `low` order is cost-aware:
 
@@ -61,13 +87,13 @@ Default paid `low` order is cost-aware:
     gpt-5.6-terra
     gpt-5.6-sol
 
-Explicit `high` remains Sol-first:
+Resolved `high` is Sol-first:
 
     gpt-5.6-sol
     gpt-5.6-terra
     gpt-5.6-luna
 
-Before a paid inference, the implementation counts input tokens for the paid candidate and computes a worst-case dollar reservation using current checked-in input/output prices and `max_output_tokens`. Long-context price multipliers documented by OpenAI are included.
+Before a paid user inference, the implementation counts input tokens for the paid candidate and computes a worst-case dollar reservation using current checked-in input/output prices and `max_output_tokens`. Long-context price multipliers documented by OpenAI are included.
 
 ### Organization Costs as the financial source of truth
 
@@ -107,7 +133,7 @@ No reliable documented runtime API for prepaid balance plus grant-level expiry m
 
 ## Responses API scope
 
-The Shell reference supports plain text input, model/quality selection, `reasoning.effort`, `max_output_tokens`, and raw response output. Tools, structured-output schemas, files/images, previous responses, and arbitrary Responses API fields are intentionally unsupported until their quota and paid-cost semantics are explicitly defined. The Shell reference is not a generic Responses API proxy.
+The Shell reference supports plain text user input, model/quality selection, automatic quality classification, `reasoning.effort`, `max_output_tokens`, and raw response output. Tools, structured-output schemas, files/images, previous responses, and arbitrary user-supplied Responses API fields are intentionally unsupported until their quota and paid-cost semantics are explicitly defined. The internal classifier may use fixed checked-in request fields such as `instructions`; this does not make the Shell reference a generic Responses API proxy.
 
 ## CLI option conventions
 
@@ -122,6 +148,8 @@ Every long-form command-line option must have a short alias. Canonical options i
     --raw, -r
     --help, -h
     --version, -v
+
+For `run`, `--quality/-q` accepts `auto`, `low`, and `high`, with `auto` as the default. For prompt-less `select`, only actual selection profiles (`low` / `high`) apply and the default remains `low`.
 
 `run --input TEXT`, `run --input -`, and non-TTY stdin are supported. Positional prompt input remains convenient for `run`.
 

@@ -18,11 +18,29 @@ Requirements: Bash, curl, and jq.
 
 ## Selection policy
 
-Complimentary quota is always tried first. The default `low` order is:
+`run` defaults to `auto` quality. Before normal model selection, a small difficulty classifier may route an ordinary task to `low` or promote a difficult task to `high` while staying inside complimentary quota.
+
+    ./shell/openai-quota-fuse.sh run "Translate to Japanese: good morning"
+    # quality: auto -> low
+
+    ./shell/openai-quota-fuse.sh run "Review this repository architecture and design a broad refactor"
+    # quality: auto -> high
+
+The classifier uses `gpt-5.6-luna`, low reasoning effort, and at most 8 output tokens. Its own `input_tokens + max_output_tokens` must fit complimentary quota before the classifier is called. If classification cannot run or returns anything other than `low` / `high`, OpenAIQuotaFuse does not spend money on routing; it falls back to `low`.
+
+Explicit choices override auto routing:
+
+    -q low   # fixed low; no classifier
+    -q high  # fixed high; no classifier
+    -m MODEL # fixed model; no classifier
+
+`select` has no prompt to classify, so its default remains `low`.
+
+Complimentary `low` order is:
 
     gpt-5.6-terra → gpt-5.6-luna → gpt-5.6-sol
 
-Terra and Luna share the high-volume complimentary token quota, so Terra is preferred there for capability per quota token. `-q high` is explicitly Sol-first:
+Terra and Luna share the high-volume complimentary token quota, so Terra is preferred there for capability per quota token. `high` is Sol-first:
 
     gpt-5.6-sol → gpt-5.6-terra → gpt-5.6-luna
 
@@ -58,13 +76,15 @@ Examples:
     ./shell/openai-quota-fuse.sh run -i "Explain this"
     printf '%s\n' "Explain this" | ./shell/openai-quota-fuse.sh run
     ./shell/openai-quota-fuse.sh run -i - < prompt.txt
+    ./shell/openai-quota-fuse.sh run -q low "Treat this as a cheap task"
+    ./shell/openai-quota-fuse.sh run -q high "Prefer high-quality routing"
     ./shell/openai-quota-fuse.sh run -m gpt-5.6-luna -o 256 "Answer in one sentence"
     ./shell/openai-quota-fuse.sh run -e high "Think carefully"
     ./shell/openai-quota-fuse.sh run -r "Return the full Responses API JSON"
 
-`-e/--effort` controls Responses API `reasoning.effort` independently of `-q/--quality`. `quality` chooses the model order; `effort` controls how much reasoning the selected model performs. Supported values are `none`, `low`, `medium`, `high`, `xhigh`, and `max`. Omitting the option leaves the model/API default unchanged.
+`-q/--quality` accepts `auto`, `low`, or `high` for `run`; omitting it means `auto`. `-e/--effort` controls Responses API `reasoning.effort` independently. `quality` chooses the model order while `effort` controls how much reasoning the selected model performs. Supported effort values are `none`, `low`, `medium`, `high`, `xhigh`, and `max`. Omitting effort leaves the model/API default unchanged.
 
-`-r/--raw` changes stdout from extracted output text to the complete Responses API JSON. Quota/model/usage diagnostics remain on stderr.
+`-r/--raw` changes stdout from extracted output text to the complete Responses API JSON. Classifier, quota, model, and usage diagnostics remain on stderr.
 
 The Shell reference deliberately accepts only plain text input plus model/quality/effort/max-output/raw controls. Tools, structured-output schemas, files/images, `previous_response_id`, and arbitrary Responses API fields are out of scope for the Shell P0 rather than being partially proxied. Add them only when OpenAIQuotaFuse has explicit quota/accounting semantics for them.
 
@@ -81,7 +101,7 @@ Legacy positional `check MODEL TOKENS` and `select TOKENS [MODEL ...]` remain co
 
 ## Policy and maintenance
 
-Eligible models and quota-group limits live in `models.json`; curated complimentary and paid selection policy lives in `model-selection.json`. Current OpenAI primary documentation takes precedence over these snapshots when they become stale.
+Eligible models and quota-group limits live in `models.json`; curated complimentary/paid selection and classifier policy live in `model-selection.json`. Current OpenAI primary documentation takes precedence over these snapshots when they become stale.
 
 The Shell implementation deliberately counts all usage on registered models until incentive-specific Usage API behavior is validated. Organization Costs is used for financial accounting because OpenAI recommends the Costs endpoint for spend that should reconcile to billing. `bash scripts/audit-model-policy.sh` checks model-policy review age; the GitHub workflow also runs weekly.
 
