@@ -10,21 +10,22 @@ This document tracks implementation work that remained after PR #1 established t
 - [x] Add explicit long options with short aliases to `check` and `select` while retaining the original positional forms for compatibility.
 - [x] Support `--model/-m` and `--estimated-tokens/-t` in the Shell CLI.
 - [x] Keep complimentary quota groups separate from model quality or task-difficulty concepts. Quota groups represent capacity/accounting only.
-- [ ] Decide whether a separate caller-selected task/quality hint is useful for choosing cheaper models for easy work. If added, it must use terminology that cannot be confused with complimentary quota groups and must not require an extra inference call.
+- [x] Add caller-selected `--quality/-q` as a task/quality hint, with `low` as the default and explicit `high` as a separate selection profile from quota groups. Model selection does not spend an extra inference call.
 - [ ] Decide whether the legacy positional `check MODEL TOKENS` and `select TOKENS [MODEL ...]` forms should eventually be deprecated.
 
 ## P0 — `run` end-to-end flow
 
-- [ ] Add `run` as the primary user-facing command.
-- [ ] Accept the real request through `--input/-i`; support stdin for pipeline use.
-- [ ] Keep the normal inference key (`OPENAI_API_KEY`) separate from `OPENAI_ADMIN_KEY` used for Organization Usage API access.
+- [x] Add `run` as the primary user-facing command.
+- [ ] Accept the real request through `--input/-i`; support stdin for pipeline use. The current implementation accepts the prompt as a positional argument.
+- [x] Keep the normal inference key (`OPENAI_API_KEY`) separate from `OPENAI_ADMIN_KEY` used for Organization Usage API access.
 - [ ] Document that `OPENAI_ADMIN_KEY` is created from the OpenAI Platform organization Admin Keys page and should only be used for administrative/Usage API access.
-- [ ] Count request input with `POST /responses/input_tokens`; do not estimate token count locally when the API can return the authoritative count.
-- [ ] Reserve `input_tokens + max_output_tokens` before inference. `max_output_tokens` includes visible output and reasoning tokens.
-- [ ] Select the first candidate whose quota group can accommodate the conservative reservation.
-- [ ] Execute the Responses API request only after the quota check succeeds.
+- [ ] Count request input with `POST /responses/input_tokens`; do not estimate token count locally when the API can return the authoritative count. The current implementation uses a conservative byte-based local estimate.
+- [x] Add `max_output_tokens` to the current local input-token estimate and reserve that conservative requirement before inference.
+- [x] Select the first candidate whose quota group can accommodate the conservative reservation.
+- [x] Execute the Responses API request only after the quota check succeeds.
 - [ ] Expose actual returned `usage.input_tokens`, `usage.output_tokens`, and `usage.total_tokens` in diagnostics.
-- [ ] Add `--max-output-tokens/-o`, `--raw/-r`, `--input/-i`, and `--model/-m` to `run`.
+- [x] Add `--max-output-tokens/-o` and `--model/-m` to `run`.
+- [ ] Add `--raw/-r` and `--input/-i` to `run`.
 - [ ] Define behavior for tools, structured output, files/images, previous responses, and other Responses API fields without turning the Shell reference into a generic API wrapper prematurely.
 
 ## P0 — Annual prepaid-credit budget (next development priority)
@@ -65,7 +66,7 @@ This document tracks implementation work that remained after PR #1 established t
 - [ ] Add Shell tests with mocked Usage API responses.
 - [ ] Cover UTC day reset, tier 1–2 vs tier 3–5 limits, reserve calculation, unknown models, exhausted groups, and candidate fallback.
 - [ ] Cover long/short CLI aliases and explicit candidate ordering.
-- [ ] Add mocked tests for input-token counting and `run` before making `run` the documented default path.
+- [ ] Add mocked tests for input-token counting and the currently documented `run` end-to-end path.
 - [ ] Add annual paid-budget tests: free-quota-first behavior, below-cap paid fallback, request-would-exceed-cap blocking, annual reset, persistence, and explicit `high` selection.
 - [ ] Add prepaid-credit expiry/burn-down tests if expiry support is implemented, including expiry boundary and unavailable billing metadata.
 - [ ] Run the same policy fixtures against future Python and Swift implementations.
