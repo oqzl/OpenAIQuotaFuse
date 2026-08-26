@@ -6,10 +6,23 @@
 
 - [x] Keep `models.json` as the broad accounting registry and `model-selection.json` as the curated automatic-selection policy.
 - [x] Add explicit long options with short aliases to `check` and `select` while retaining positional compatibility forms.
-- [x] Support `--model/-m`, `--estimated-tokens/-t`, and caller-selected `--quality/-q`; default quality is `low`.
+- [x] Support `--model/-m`, `--estimated-tokens/-t`, and caller-selected `--quality/-q`.
+- [x] Keep `select` default quality at `low`, while `run` defaults to prompt-aware `auto` quality.
 - [x] Keep complimentary quota groups separate from model quality/task difficulty.
 - [x] Prefer Terra over Luna for ordinary complimentary-quota execution while both consume the same high-volume token quota.
 - [x] Legacy positional `check MODEL TOKENS` and `select TOKENS [MODEL ...]` remain supported through 0.x and are planned for removal at 1.0; option forms are canonical.
+
+## P0 — Automatic run quality
+
+- [x] Add `run -q auto` and make it the `run` default without changing prompt-less `select` semantics.
+- [x] Use a small Luna classifier to return exactly `low` or `high` before normal model selection.
+- [x] Keep explicit `-q low`, `-q high`, and `-m MODEL` stronger than automatic classification and bypass the classifier.
+- [x] Account for classifier input plus max output against complimentary quota before dispatch.
+- [x] Never use paid fallback merely to classify quality; use configured `low` fallback if the classifier cannot run or returns invalid output.
+- [x] Emit classifier/model-routing diagnostics on stderr.
+- [x] Keep classifier model, effort, output cap, instructions, and fallback in `model-selection.json`.
+- [x] Add mocked coverage for auto→high routing and explicit override bypass.
+- [ ] Add a reusable fixture set of representative easy/hard prompts and periodically evaluate classifier accuracy before changing classifier model/prompt.
 
 ## P0 — `run` end-to-end flow
 
@@ -66,7 +79,7 @@
 - [ ] Add broader Shell tests with mocked Usage API responses.
 - [ ] Cover UTC reset, tier limits, reserve calculation, unknown models, exhausted groups, and candidate fallback.
 - [ ] Cover long/short CLI aliases and explicit candidate ordering.
-- [x] Add a mocked test covering authoritative input-token counting and `run`, including input/stdin/raw, reasoning effort, and actual usage diagnostics.
+- [x] Add a mocked test covering authoritative input-token counting and `run`, including input/stdin/raw, reasoning effort, actual usage diagnostics, auto quality routing, and explicit classifier bypass.
 - [x] Add mocked annual paid-budget coverage for free-first, paid fallback, Costs API external spend, cap blocking, persistence, and explicit paid ordering basics.
 - [ ] Add deeper annual-budget tests for annual reset, Costs pagination, legacy-ledger migration, and concurrent-process locking.
 - [ ] Run the same policy fixtures against future Python and Swift implementations.
@@ -75,14 +88,14 @@
 
 - [ ] Implement `spec/QUOTA_POLICY.md`, sharing `models.json` and `model-selection.json`.
 - [ ] Match useful Shell semantics while keeping the Python API idiomatic.
-- [ ] Implement the same conservative `run`, reasoning-effort, Organization Costs, and annual paid-budget behavior.
+- [ ] Implement the same conservative `run`, auto-quality, reasoning-effort, Organization Costs, and annual paid-budget behavior.
 
 ## P2 — Swift 6 implementation
 
 - [ ] Add a Swift Package implementing the same quota policy.
 - [ ] Share or generate strongly typed data from the machine-readable registries.
 - [ ] Keep networking and policy logic separable.
-- [ ] Implement the same conservative reservation, reasoning-effort, Organization Costs, and annual paid-budget behavior.
+- [ ] Implement the same conservative reservation, auto-quality, reasoning-effort, Organization Costs, and annual paid-budget behavior.
 
 ## Design constraints
 
@@ -90,8 +103,9 @@
 - Paid fallback is bounded by the configured annual cap; intended default is `$5` per UTC calendar year.
 - Organization Costs is the financial spend floor; local paid accounting exists only to guard the reporting-delay window and unknown outcomes.
 - Complimentary ordering optimizes capability per quota token; paid ordering optimizes capability/cost under a dollar budget.
+- `run --quality auto` may spend one separately quota-checked complimentary inference call to classify task difficulty; it must never spend paid budget just to choose quality.
+- Explicit `--quality low/high` and explicit `--model` bypass classification.
 - `--quality` selects model preference; `--effort` controls reasoning inside the selected model.
-- Quota checks must not spend an inference call merely to choose a model.
 - Complimentary quota groups are not model-quality/task-difficulty profiles.
 - Current OpenAI primary documentation and observed API behavior take precedence over stale assumptions.
 - `spec/QUOTA_POLICY.md` remains the language-neutral behavioral source of truth.
