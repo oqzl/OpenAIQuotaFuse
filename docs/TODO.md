@@ -1,0 +1,84 @@
+# TODO
+
+[日本語](../docs-ja/TODO.md)
+
+This document tracks implementation work that remained after PR #1 established the Shell MVP and shared quota policy.
+
+## P0 — Shell CLI usability and policy selection
+
+- [x] Keep `models.json` as the broad accounting registry and `model-selection.json` as the curated automatic-selection policy.
+- [x] Add explicit long options with short aliases to `check` and `select` while retaining the original positional forms for compatibility.
+- [x] Support `--model/-m` and `--estimated-tokens/-t` in the Shell CLI.
+- [x] Keep complimentary quota groups separate from model quality or task-difficulty concepts. Quota groups represent capacity/accounting only.
+- [ ] Decide whether a separate caller-selected task/quality hint is useful for choosing cheaper models for easy work. If added, it must use terminology that cannot be confused with complimentary quota groups and must not require an extra inference call.
+- [ ] Decide whether the legacy positional `check MODEL TOKENS` and `select TOKENS [MODEL ...]` forms should eventually be deprecated.
+
+## P0 — `run` end-to-end flow
+
+- [ ] Add `run` as the primary user-facing command.
+- [ ] Accept the real request through `--input/-i`; support stdin for pipeline use.
+- [ ] Keep the normal inference key (`OPENAI_API_KEY`) separate from `OPENAI_ADMIN_KEY` used for Organization Usage API access.
+- [ ] Document that `OPENAI_ADMIN_KEY` is created from the OpenAI Platform organization Admin Keys page and should only be used for administrative/Usage API access.
+- [ ] Count request input with `POST /responses/input_tokens`; do not estimate token count locally when the API can return the authoritative count.
+- [ ] Reserve `input_tokens + max_output_tokens` before inference. `max_output_tokens` includes visible output and reasoning tokens.
+- [ ] Select the first candidate whose quota group can accommodate the conservative reservation.
+- [ ] Execute the Responses API request only after the quota check succeeds.
+- [ ] Expose actual returned `usage.input_tokens`, `usage.output_tokens`, and `usage.total_tokens` in diagnostics.
+- [ ] Add `--max-output-tokens/-o`, `--raw/-r`, `--input/-i`, and `--model/-m` to `run`.
+- [ ] Define behavior for tools, structured output, files/images, previous responses, and other Responses API fields without turning the Shell reference into a generic API wrapper prematurely.
+
+## P1 — Accounting validation
+
+- [x] Perform a live `status --raw` validation with a real Admin API key for the zero-usage case; the observed daily bucket returned `results: []` as expected.
+- [ ] Perform a live inference probe and inspect the resulting Usage API record once API billing is active.
+- [ ] Inspect actual `service_tier` values and determine whether the Usage API can distinguish incentive-covered traffic reliably enough to tighten accounting.
+- [ ] Until validated, continue counting all usage on registered eligible models so remaining complimentary capacity is never overstated.
+- [ ] Document observed Usage API response examples with secrets and organization identifiers removed.
+
+## P1 — Expiring prepaid credits
+
+- [ ] Treat purchased API prepaid credits as a separate budget from complimentary daily token quota. OpenAI currently documents a $5 minimum purchase and a one-year expiry for purchased credits.
+- [ ] Determine whether an official API exposes prepaid-credit balance, individual grant/purchase expiry, or enough billing data to derive them reliably. Do not scrape the billing UI for runtime policy decisions.
+- [ ] If balance and expiry can be obtained reliably, design an optional credit burn-down policy so prepaid credit that would otherwise expire can be deliberately consumed before expiry instead of enforcing a strict zero-paid-usage policy.
+- [ ] Keep burn-down opt-in and bounded. Never silently enable paid usage merely because prepaid credit exists.
+- [ ] Define behavior for multiple credit grants/purchases with different expiry dates and for OpenAI's documented delayed billing / possible negative balance behavior.
+- [ ] If expiry cannot be retrieved through a supported API, consider explicit user configuration such as remaining prepaid budget and expiry date rather than guessing.
+
+## P1 — Model policy maintenance
+
+- [ ] Re-check incentive eligibility, quota-group placement, availability/deprecation, and API pricing whenever the policy audit expires.
+- [ ] Evaluate whether each automatic-selection candidate still has a reason to exist relative to newer models in the same quota group.
+- [ ] Keep older active models in accounting even when they are removed from automatic selection.
+- [ ] Add tests ensuring every automatic-selection candidate exists in `models.json`.
+- [ ] Consider machine-readable rationale/price metadata only if it materially improves the recurring policy audit.
+
+## P1 — Tests
+
+- [ ] Add Shell tests with mocked Usage API responses.
+- [ ] Cover UTC day reset, tier 1–2 vs tier 3–5 limits, reserve calculation, unknown models, exhausted groups, and candidate fallback.
+- [ ] Cover long/short CLI aliases and explicit candidate ordering.
+- [ ] Add mocked tests for input-token counting and `run` before making `run` the documented default path.
+- [ ] Add burn-down policy tests if expiring prepaid-credit support is implemented, including disabled-by-default, expiry boundary, budget cap, and unavailable billing metadata.
+- [ ] Run the same policy fixtures against future Python and Swift implementations.
+
+## P2 — Python 3 implementation
+
+- [ ] Implement the language-neutral policy from `spec/QUOTA_POLICY.md`.
+- [ ] Share `models.json` and `model-selection.json` rather than duplicating model/quota data.
+- [ ] Match Shell exit/error semantics where useful, while keeping the Python API idiomatic.
+- [ ] Implement the same conservative `run` reservation behavior.
+
+## P2 — Swift 6 implementation
+
+- [ ] Add a Swift Package implementing the same quota policy.
+- [ ] Share the machine-readable registry/selection files or generate strongly typed data from them.
+- [ ] Keep networking and policy logic separable so applications can present their own UI.
+- [ ] Implement the same conservative reservation behavior.
+
+## Design constraints
+
+- Avoiding accidental paid usage takes precedence over maximizing free-quota utilization unless the caller explicitly enables a bounded prepaid-credit burn-down policy.
+- Quota checks must not spend an inference call merely to decide which model to use.
+- Complimentary quota groups must not be presented as model-quality or task-difficulty profiles.
+- Current OpenAI primary documentation and observed API behavior take precedence over stale repository assumptions.
+- The language-neutral policy in `spec/QUOTA_POLICY.md` remains the behavioral source of truth.

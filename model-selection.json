@@ -12,5 +12,13 @@
     "gpt-5.6-luna",
     "gpt-5.6-terra"
   ],
-  "policy": "Keep accounting coverage broad in models.json, but keep automatic selection candidates intentionally small. Review quality, price, deprecation status, and quota-group placement before adding or retaining a candidate."
+  "default_quality": "default",
+  "quality_profiles": {
+    "default": [
+      "gpt-5.6-sol",
+      "gpt-5.6-luna",
+      "gpt-5.6-terra"
+    ]
+  },
+  "policy": "Keep accounting coverage broad in models.json, but keep automatic selection candidates intentionally small. Quota groups describe complimentary quota capacity and must not be conflated with model quality or task difficulty. The default_quality/quality_profiles fields are temporary CLI-schema compatibility and do not represent quota classes or supported quality tiers; remove them when the Shell parser is simplified."
 }
