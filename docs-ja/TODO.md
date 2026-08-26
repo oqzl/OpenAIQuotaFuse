@@ -10,21 +10,22 @@
 - [x] `check` と `select` に明示的な long option と short alias を追加し、既存の位置引数形式も互換性のため維持する。
 - [x] Shell CLI で `--model/-m`、`--estimated-tokens/-t` を扱えるようにする。
 - [x] 無料 quota group とモデル品質・タスク難易度の概念を分離する。quota group は容量・会計だけを表す。
-- [ ] 軽いタスクで安価なモデルを選ぶため、呼び出し側が指定する別の task/quality hint が有用か検討する。追加する場合は無料 quota group と混同しない語彙を使い、判定のための追加推論は行わない。
+- [x] 呼び出し側が明示できる task/quality hint として `--quality/-q` を追加し、既定 `low`、明示 `high` の選択 profile を quota group から分離する。モデル選択のための追加推論は行わない。
 - [ ] 旧形式の `check MODEL TOKENS` と `select TOKENS [MODEL ...]` を将来 Deprecated にするか判断する。
 
 ## P0 — `run` の E2E フロー
 
-- [ ] 主たるユーザー向けコマンドとして `run` を追加する。
-- [ ] 実際のリクエストを `--input/-i` で受け取り、パイプ利用向けに stdin も扱う。
-- [ ] 通常推論用 `OPENAI_API_KEY` と Organization Usage API 用 `OPENAI_ADMIN_KEY` を分離する。
+- [x] 主たるユーザー向けコマンドとして `run` を追加する。
+- [ ] 実際のリクエストを `--input/-i` で受け取り、パイプ利用向けに stdin も扱う。現在は位置引数の prompt を受け取る。
+- [x] 通常推論用 `OPENAI_API_KEY` と Organization Usage API 用 `OPENAI_ADMIN_KEY` を分離する。
 - [ ] `OPENAI_ADMIN_KEY` は OpenAI Platform の Organization の Admin Keys 画面で作成し、管理・Usage API 用だけに使うことを文書化する。
-- [ ] `POST /responses/input_tokens` で input token 数を取得し、API が正本値を返せる場合はローカル推定を使わない。
-- [ ] 推論前に `input_tokens + max_output_tokens` を予約する。`max_output_tokens` は可視出力と reasoning token の双方を含む。
-- [ ] 保守的な予約量を収容できる quota group の最初の候補モデルを選ぶ。
-- [ ] quota check 成功後にのみ Responses API を実行する。
+- [ ] `POST /responses/input_tokens` で input token 数を取得し、API が正本値を返せる場合はローカル推定を使わない。現在は入力 byte 数から安全側に概算する。
+- [x] 現在のローカル input token 概算値に `max_output_tokens` を加え、推論前に保守的な必要 quota を予約する。
+- [x] 保守的な予約量を収容できる quota group の最初の候補モデルを選ぶ。
+- [x] quota check 成功後にのみ Responses API を実行する。
 - [ ] 実レスポンスの `usage.input_tokens`、`usage.output_tokens`、`usage.total_tokens` を診断情報として公開する。
-- [ ] `run` に `--max-output-tokens/-o`、`--raw/-r`、`--input/-i`、`--model/-m` を追加する。
+- [x] `run` に `--max-output-tokens/-o` と `--model/-m` を追加する。
+- [ ] `run` に `--raw/-r` と `--input/-i` を追加する。
 - [ ] tools、structured output、files/images、previous response 等をどこまで受けるか定義する。Shell リファレンス実装を汎用 API wrapper にしすぎない。
 
 ## P0 — 年間プリペイド予算（次回開発の最優先）
@@ -65,7 +66,7 @@
 - [ ] Usage API レスポンスを mock した Shell テストを追加する。
 - [ ] UTC 日次リセット、tier 1–2 / tier 3–5、reserve 計算、未知モデル、quota 枯渇、候補フォールバックを網羅する。
 - [ ] long/short alias と明示的な候補順指定をテストする。
-- [ ] `run` を既定経路として文書化する前に、input-token counting と `run` の mock テストを追加する。
+- [ ] 現在 README で既定経路としている `run` について、input-token counting と E2E の mock テストを追加する。
 - [ ] 年間有料予算のテストを追加する。無料 quota 優先、上限未満での有料フォールバック、今回の実行で上限超過する場合の BLOCK、年間リセット、永続化、明示 `high` を含める。
 - [ ] prepaid credit の expiry/burn-down を実装する場合、有効期限境界と billing metadata 取得不能時を含むテストを追加する。
 - [ ] 将来の Python / Swift 実装でも同じ policy fixture を利用する。
