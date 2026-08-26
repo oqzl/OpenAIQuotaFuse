@@ -82,13 +82,23 @@
 - [x] Add a mocked test covering authoritative input-token counting and `run`, including input/stdin/raw, reasoning effort, actual usage diagnostics, auto quality routing, and explicit classifier bypass.
 - [x] Add mocked annual paid-budget coverage for free-first, paid fallback, Costs API external spend, cap blocking, persistence, and explicit paid ordering basics.
 - [ ] Add deeper annual-budget tests for annual reset, Costs pagination, legacy-ledger migration, and concurrent-process locking.
-- [ ] Run the same policy fixtures against future Python and Swift implementations.
+- [ ] Run the same policy fixtures against Shell, Python, and future Swift implementations.
 
-## P2 — Python 3 implementation
+## P1 — Python 3 implementation
 
-- [ ] Implement `spec/QUOTA_POLICY.md`, sharing `models.json` and `model-selection.json`.
-- [ ] Match useful Shell semantics while keeping the Python API idiomatic.
-- [ ] Implement the same conservative `run`, auto-quality, reasoning-effort, Organization Costs, and annual paid-budget behavior.
+- [x] Implement the core `spec/QUOTA_POLICY.md` semantics using shared `models.json` and `model-selection.json`.
+- [x] Match useful Shell CLI semantics for `run`, `status`, `costs`, `check`, `select`, and `models` using Python standard library networking and argument parsing.
+- [x] Implement conservative reservation, auto-quality, reasoning effort, Organization Costs, annual paid fallback, and the local lag guard.
+- [x] Add initial unit coverage for quota grouping/reserve arithmetic, pricing, output extraction, and paid-ledger guard behavior.
+- [ ] Add mocked HTTP end-to-end parity fixtures and run them against both Shell and Python implementations.
+
+## P1 — Codex plugin
+
+- [x] Add `.codex-plugin/plugin.json` and a bundled `quota-fuse` Skill.
+- [x] Use Python as the plugin-facing execution surface; keep Shell as a Unix reference implementation.
+- [x] Document local marketplace installation and credential setup in English/Japanese.
+- [x] Explicitly document that the plugin governs secondary API calls dispatched through Fuse and cannot change the model already running the current Codex turn.
+- [ ] Add plugin validation to CI when a stable standalone validator is available in the development environment.
 
 ## P2 — Swift 6 implementation
 
