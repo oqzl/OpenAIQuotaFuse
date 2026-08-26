@@ -47,11 +47,11 @@ Usage API の生レスポンスを確認:
 
 ## サンプル
 
-そのまま実行できる Shell サンプルを `examples/shell/` に置いています。
+そのまま試せる Shell サンプルを `examples/shell/` に置いています。
 
-    ./examples/shell/status.sh
-    ./examples/shell/check-request.sh
-    ./examples/shell/select-model.sh
+    bash examples/shell/status.sh
+    bash examples/shell/check-request.sh
+    bash examples/shell/select-model.sh
 
 `select-model.sh` は `gpt-5.6-sol` → `gpt-5.6-luna` → `gpt-5.6-terra` の順をユーザーの品質優先順位として指定し、推定 8,000 tokens のリクエストを無料枠内で通せる最初の候補を選択します。
 
