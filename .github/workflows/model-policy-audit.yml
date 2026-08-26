@@ -1,0 +1,17 @@
+name: Model policy audit
+
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: '17 3 * * 1'
+
+permissions:
+  contents: read
+
+jobs:
+  audit:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Audit model registry and selection policy
+        run: bash scripts/audit-model-policy.sh
