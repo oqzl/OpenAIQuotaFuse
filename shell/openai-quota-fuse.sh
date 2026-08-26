@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-readonly VERSION="0.8.0-dev"
+readonly VERSION="0.9.0-dev"
 readonly USAGE_URL="https://api.openai.com/v1/organization/usage/completions"
 readonly COSTS_URL="https://api.openai.com/v1/organization/costs"
 readonly RESPONSES_URL="https://api.openai.com/v1/responses"
@@ -35,12 +35,19 @@ Options:
   -m, --model MODEL              Model to use/check or explicit selection candidate
   -t, --estimated-tokens TOKENS Conservative token requirement for check/select
   -o, --max-output-tokens TOKENS Maximum output tokens for run (default: 1024)
-  -q, --quality PROFILE          Model-selection profile: high or low (default: low)
+  -q, --quality PROFILE          run: auto, high, or low (default: auto)
+                                 select: high or low (default: low)
   -e, --effort LEVEL             Reasoning effort: none, low, medium, high, xhigh, max
                                  Omit to use the model/API default.
   -r, --raw                      Print the complete API JSON where supported
   -h, --help                     Show help
   -v, --version                  Show version
+
+Auto quality:
+  run defaults to auto. A small complimentary-quota classifier may promote difficult
+  tasks from low to high before normal model selection. Explicit -q low/high and -m
+  bypass classification. Classification never uses paid fallback; if it cannot run or
+  returns an invalid result, run conservatively falls back to low.
 
 Paid fallback:
   Complimentary quota is tried first. If it cannot fit the request, run may use the
@@ -121,7 +128,7 @@ validate_selection() {
   local f
   f="$(selection_file)"
   [[ -r "$f" ]] || { echo "error: selection policy not readable: $f" >&2; exit 2; }
-  jq -e '.schema_version == 1 and (.quality_profiles|type=="object") and (.paid_fallback.pricing_usd_per_million_tokens|type=="object")' "$f" >/dev/null ||
+  jq -e '.schema_version == 1 and (.quality_profiles|type=="object") and (.auto_quality|type=="object") and (.paid_fallback.pricing_usd_per_million_tokens|type=="object")' "$f" >/dev/null ||
     { echo "error: invalid selection policy: $f" >&2; exit 2; }
 }
 
@@ -303,6 +310,13 @@ request_payload() {
   fi
 }
 
+classifier_payload() {
+  local model="$1" prompt="$2" max="$3" effort="$4" instructions="$5"
+  jq -n --arg model "$model" --arg input "$prompt" --arg instructions "$instructions" \
+    --argjson max "$max" --arg effort "$effort" \
+    '{model:$model,input:$input,instructions:$instructions,max_output_tokens:$max,reasoning:{effort:$effort}}'
+}
+
 count_input_tokens() {
   local payload response count
   payload="$(jq -n --arg model "$1" --arg input "$2" '{model:$model,input:$input}')"
@@ -313,6 +327,85 @@ count_input_tokens() {
   count="$(jq -er '.input_tokens|select(type=="number" and .>=0)' <<<"$response")" ||
     { echo 'error: invalid response from /responses/input_tokens' >&2; return 5; }
   printf '%d\n' "$count"
+}
+
+count_classifier_input_tokens() {
+  local payload response count
+  payload="$(classifier_payload "$1" "$2" "$3" "$4" "$5")"
+  response="$(curl --fail-with-body --silent --show-error "$INPUT_TOKENS_URL" \
+    -H "Authorization: Bearer $OPENAI_API_KEY" \
+    -H 'Content-Type: application/json' \
+    -d "$payload")" || return $?
+  count="$(jq -er '.input_tokens|select(type=="number" and .>=0)' <<<"$response")" ||
+    { echo 'error: invalid classifier token count response' >&2; return 5; }
+  printf '%d\n' "$count"
+}
+
+classify_quality() {
+  local prompt="$1" f model max effort instructions fallback input required payload response text result
+  f="$(selection_file)"
+  model="$(jq -r '.auto_quality.classifier_model' "$f")"
+  max="$(jq -r '.auto_quality.max_output_tokens' "$f")"
+  effort="$(jq -r '.auto_quality.reasoning_effort' "$f")"
+  instructions="$(jq -r '.auto_quality.instructions' "$f")"
+  fallback="$(jq -r '.auto_quality.fallback_quality' "$f")"
+
+  if ! input="$(count_classifier_input_tokens "$model" "$prompt" "$max" "$effort" "$instructions")"; then
+    printf 'warning: auto quality classifier token count failed; using %s\n' "$fallback" >&2
+    printf '%s\n' "$fallback"
+    return 0
+  fi
+  required=$((input + max))
+  if ! check_model "$model" "$required" >/dev/null; then
+    printf 'warning: auto quality classifier has no complimentary quota; using %s\n' "$fallback" >&2
+    printf '%s\n' "$fallback"
+    return 0
+  fi
+
+  payload="$(classifier_payload "$model" "$prompt" "$max" "$effort" "$instructions")"
+  if ! response="$(curl --fail-with-body --silent --show-error "$RESPONSES_URL" \
+      -H "Authorization: Bearer $OPENAI_API_KEY" \
+      -H 'Content-Type: application/json' \
+      -d "$payload")"; then
+    printf 'warning: auto quality classifier request failed; using %s\n' "$fallback" >&2
+    printf '%s\n' "$fallback"
+    return 0
+  fi
+
+  text="$(jq -r '[.output[]?|select(.type=="message")|.content[]?|select(.type=="output_text")|.text]|join("\n")' <<<"$response")"
+  result="$(tr '[:upper:]' '[:lower:]' <<<"$text" | tr -cd '[:alpha:]\n' | head -n1)"
+  case "$result" in
+    low|high)
+      printf 'quality: auto -> %s\nclassifier: %s (input=%d + max_output=%d)\n' "$result" "$model" "$input" "$max" >&2
+      printf '%s\n' "$result"
+      ;;
+    *)
+      printf 'warning: auto quality classifier returned invalid result; using %s\n' "$fallback" >&2
+      printf '%s\n' "$fallback"
+      ;;
+  esac
+}
+
+resolve_run_quality() {
+  local requested="$1" explicit_model="$2" prompt="$3" f
+  f="$(selection_file)"
+  [[ -n "$requested" ]] || requested="$(jq -r '.default_run_quality // .default_quality' "$f")"
+  case "$requested" in
+    low|high)
+      printf '%s\n' "$requested"
+      ;;
+    auto)
+      if [[ -n "$explicit_model" ]]; then
+        printf '%s\n' "$(jq -r '.auto_quality.fallback_quality' "$f")"
+      else
+        classify_quality "$prompt"
+      fi
+      ;;
+    *)
+      echo 'error: run quality must be one of: auto, low, high' >&2
+      return 2
+      ;;
+  esac
 }
 
 price_estimate() {
@@ -564,6 +657,7 @@ run_prompt() {
   [[ "$max" =~ ^[1-9][0-9]*$ ]] ||
     { echo 'error: max output tokens must be a positive integer' >&2; return 2; }
   validate_effort "$effort" || return $?
+  quality="$(resolve_run_quality "$quality" "$explicit" "$prompt")" || return $?
 
   if [[ -n "$explicit" ]]; then
     first="$explicit"
@@ -607,7 +701,9 @@ run_prompt() {
 print_models() {
   jq -r '.quota_groups|to_entries[]|"\(.key): \(.value.models|join(", "))"' "$(models_file)"
   validate_selection
-  printf 'Default quality: %s\n' "$(jq -r '.default_quality' "$(selection_file)")"
+  printf 'Default select quality: %s\n' "$(jq -r '.default_quality' "$(selection_file)")"
+  printf 'Default run quality: %s\n' "$(jq -r '.default_run_quality // .default_quality' "$(selection_file)")"
+  printf 'Auto classifier: %s\n' "$(jq -r '.auto_quality.classifier_model' "$(selection_file)")"
   printf 'Paid fallback low: %s\n' "$(jq -r '.paid_fallback.quality_profiles.low|join(" -> ")' "$(selection_file)")"
 }
 
