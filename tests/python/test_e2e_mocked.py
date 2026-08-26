@@ -13,6 +13,10 @@ from urllib.parse import urlparse
 
 ROOT = Path(__file__).resolve().parents[2]
 CLI = ROOT / "python" / "openai_quota_fuse.py"
+INPUT_TOKEN_FIELDS = {
+    "conversation", "input", "instructions", "model", "parallel_tool_calls", "personality",
+    "previous_response_id", "reasoning", "text", "tool_choice", "tools", "truncation",
+}
 
 
 class MockState:
@@ -70,6 +74,10 @@ class Handler(BaseHTTPRequestHandler):
         body = self._json_body()
         MockState.requests.append((path, body))
         if path == "/v1/responses/input_tokens":
+            unknown = sorted(set(body) - INPUT_TOKEN_FIELDS)
+            if unknown:
+                self._send({"error": {"message": f"Unknown parameter: {unknown[0]!r}"}}, 400)
+                return
             self._send({"object": "response.input_tokens", "input_tokens": 7})
             return
         if path == "/v1/responses":
@@ -111,6 +119,7 @@ class MockedE2ETest(unittest.TestCase):
         self.tmp = tempfile.TemporaryDirectory()
         self.addCleanup(self.tmp.cleanup)
         self.ledger = Path(self.tmp.name) / "paid.json"
+        self.sessions = Path(self.tmp.name) / "sessions"
 
     def run_cli(self, *args: str, stdin: str | None = None, budget: str = "5") -> subprocess.CompletedProcess[str]:
         env = os.environ.copy()
@@ -121,6 +130,7 @@ class MockedE2ETest(unittest.TestCase):
             "OPENAI_QUOTA_RESERVE_PERCENT": "0",
             "OPENAI_ANNUAL_PAID_BUDGET_USD": budget,
             "OPENAI_QUOTA_FUSE_PAID_LEDGER": str(self.ledger),
+            "OPENAI_QUOTA_FUSE_SESSION_DIR": str(self.sessions),
             "OPENAI_QUOTA_FUSE_API_BASE": self.base,
         })
         return subprocess.run(
@@ -139,6 +149,9 @@ class MockedE2ETest(unittest.TestCase):
     def inference_calls(self) -> list[dict]:
         return [body for path, body in MockState.requests if path == "/v1/responses" and "instructions" not in body]
 
+    def token_count_calls(self) -> list[dict]:
+        return [body for path, body in MockState.requests if path == "/v1/responses/input_tokens"]
+
     def test_explicit_model_bypasses_classifier_and_preserves_effort(self):
         result = self.run_cli("run", "-e", "high", "-m", "gpt-5.6-luna", "-o", "20", "-i", "hello")
         self.assertEqual(result.returncode, 0, result.stderr)
@@ -148,9 +161,18 @@ class MockedE2ETest(unittest.TestCase):
         self.assertFalse(self.classifier_calls())
         self.assertEqual(self.inference_calls()[-1]["reasoning"]["effort"], "high")
 
+    def test_classifier_token_count_omits_response_only_parameters(self):
+        result = self.run_cli("run", "-o", "20", "-i", "What is Mount Fuji's height?")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn("quality: auto -> low", result.stderr)
+        classifier_count = next(body for body in self.token_count_calls() if "instructions" in body)
+        self.assertEqual(set(classifier_count), {"model", "input", "instructions"})
+        self.assertNotIn("max_output_tokens", classifier_count)
+        self.assertNotIn("reasoning", classifier_count)
+
     def test_auto_high_routes_to_sol(self):
         MockState.classifier_result = "high"
-        result = self.run_cli("run", "-o", "20", "-i", "design and implement a multi-step repository refactor")
+        result = self.run_cli("run", "-o", "20", "-i", "Compare three migration strategies for a distributed system and recommend a staged plan")
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertIn("quality: auto -> high", result.stderr)
         self.assertIn("model: gpt-5.6-sol", result.stderr)
@@ -158,10 +180,34 @@ class MockedE2ETest(unittest.TestCase):
         self.assertEqual(self.inference_calls()[-1]["model"], "gpt-5.6-sol")
 
     def test_explicit_low_bypasses_classifier_and_routes_to_terra(self):
-        result = self.run_cli("run", "-q", "low", "-o", "20", "-i", "explicit low")
+        result = self.run_cli("run", "-q", "low", "-o", "20", "-i", "Translate to English: りんご")
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertIn("model: gpt-5.6-terra", result.stderr)
         self.assertFalse(self.classifier_calls())
+
+    def test_context_file_is_included_in_count_and_inference(self):
+        context = Path(self.tmp.name) / "design.txt"
+        context.write_text("important architecture context", encoding="utf-8")
+        result = self.run_cli("run", "-q", "low", "-o", "20", "-c", str(context), "Review this design")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        inference = self.inference_calls()[-1]
+        self.assertIn("important architecture context", inference["input"])
+        self.assertIn("Review this design", inference["input"])
+        count = self.token_count_calls()[-1]
+        self.assertEqual(count["input"], inference["input"])
+
+    def test_session_persists_and_reuses_previous_response_id(self):
+        first = self.run_cli("run", "-q", "low", "-o", "20", "-s", "design", "First question")
+        self.assertEqual(first.returncode, 0, first.stderr)
+        state = json.loads((self.sessions / "design.json").read_text(encoding="utf-8"))
+        self.assertEqual(state["response_id"], "resp_mock")
+
+        MockState.requests = []
+        second = self.run_cli("run", "-q", "low", "-o", "20", "-s", "design", "Continue that discussion")
+        self.assertEqual(second.returncode, 0, second.stderr)
+        self.assertIn("session: design (continue)", second.stderr)
+        self.assertEqual(self.inference_calls()[-1]["previous_response_id"], "resp_mock")
+        self.assertEqual(self.token_count_calls()[-1]["previous_response_id"], "resp_mock")
 
     def test_stdin_and_raw_output(self):
         result = self.run_cli("run", "-m", "gpt-5.6-luna", "-o", "20", stdin="hello from stdin")
