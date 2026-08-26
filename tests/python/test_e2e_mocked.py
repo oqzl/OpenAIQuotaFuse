@@ -9,7 +9,7 @@ import tempfile
 import threading
 import unittest
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
-from urllib.parse import urlparse
+from urllib.parse import parse_qs, urlparse
 
 ROOT = Path(__file__).resolve().parents[2]
 CLI = ROOT / "python" / "openai_quota_fuse.py"
@@ -50,9 +50,23 @@ class Handler(BaseHTTPRequestHandler):
         self.wfile.write(data)
 
     def do_GET(self):
-        path = urlparse(self.path).path
+        parsed = urlparse(self.path)
+        path = parsed.path
+        query = parse_qs(parsed.query, keep_blank_values=True)
         MockState.requests.append((path, {}))
         if path == "/v1/organization/usage/completions":
+            if set(query) != {"start_time", "bucket_width", "limit", "group_by"}:
+                self._send({"error": {"message": "invalid usage query fields"}}, 400)
+                return
+            if query["bucket_width"] != ["1d"] or query["limit"] != ["1"]:
+                self._send({"error": {"message": "invalid usage bucket/limit"}}, 400)
+                return
+            if query["group_by"] != ["model", "service_tier"]:
+                self._send({"error": {"message": "invalid usage group_by"}}, 400)
+                return
+            if len(query["start_time"]) != 1 or not query["start_time"][0].isdigit():
+                self._send({"error": {"message": "invalid usage start_time"}}, 400)
+                return
             results = []
             if MockState.usage_exhausted:
                 results = [
@@ -62,6 +76,21 @@ class Handler(BaseHTTPRequestHandler):
             self._send({"object": "page", "data": [{"object": "bucket", "results": results}], "has_more": False, "next_page": None})
             return
         if path == "/v1/organization/costs":
+            if not set(query) <= {"start_time", "bucket_width", "limit", "page"}:
+                self._send({"error": {"message": "invalid costs query fields"}}, 400)
+                return
+            if not {"start_time", "bucket_width", "limit"} <= set(query):
+                self._send({"error": {"message": "missing costs query fields"}}, 400)
+                return
+            if query["bucket_width"] != ["1d"] or query["limit"] != ["180"]:
+                self._send({"error": {"message": "invalid costs bucket/limit"}}, 400)
+                return
+            if len(query["start_time"]) != 1 or not query["start_time"][0].isdigit():
+                self._send({"error": {"message": "invalid costs start_time"}}, 400)
+                return
+            if "page" in query and (len(query["page"]) != 1 or not query["page"][0]):
+                self._send({"error": {"message": "invalid costs page"}}, 400)
+                return
             self._send({
                 "object": "page",
                 "data": [{"object": "bucket", "results": [{
