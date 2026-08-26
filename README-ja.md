@@ -2,83 +2,109 @@
 
 [English](README.md) | 日本語
 
-OpenAIQuotaFuse は、OpenAI の Data Sharing Incentive 対象トラフィックに付与される日次無料トークン枠の範囲内へ、原則として API 利用を収めるための OpenAI 専用 quota guard です。
+OpenAIQuotaFuse は、OpenAI API の無料トークン枠をできるだけ超えないようにして API を呼ぶための quota guard です。
 
-Shell / Python 3 / Swift 6 で同じポリシーを実装し、まず Shell CLI をリファレンス実装とします。
+## まずこれだけ
 
-OpenAI の無料対象モデルと quota group の上限は時間とともに変わるため、各実装へハードコードせず、共通の機械可読レジストリ `models.json` に集約します。`models.json` は無料枠の会計対象を広く保持し、自動選択で実際に使う候補は `model-selection.json` に分離します。
+やりたいことは単純です。
 
-quota group は無料 quota の容量分類です。モデル品質やタスク難易度の profile ではありません。OpenAIQuotaFuse ではこれらの概念を混同しません。
+    OpenAI API を使いたい
+            ↓
+    OpenAIQuotaFuse
+            ↓
+       無料枠に収まる？
+        ↓ YES   ↓ NO
+       呼ぶ      止める
 
-## Shell MVP
+普段は `status` や `select` を自分で組み合わせる必要はありません。最初は `run` だけ覚えてください。
 
-必要なもの:
+### 1. ダウンロード
 
-- Bash
-- curl
-- jq
-- Organization Usage API を参照できる OpenAI Admin API key
+    git clone https://github.com/oqzl/OpenAIQuotaFuse.git
+    cd OpenAIQuotaFuse
 
-Admin key は OpenAI Platform の Organization の Admin Keys 画面で作成します。Organization レベルの強い credential なので、通常の推論用 API key とは分離してください。`OPENAI_ADMIN_KEY` は Usage API の参照だけに使用し、今後実装する `run` は推論用に別の `OPENAI_API_KEY` を使用します。
+必要なのは Bash、curl、jq です。
 
-初期設定:
+### 2. 2種類の API key を設定
 
     cp .env.example .env
     $EDITOR .env
 
-現在の quota 残量を保守的に確認:
+`.env` に次の2つを設定します。
 
+    OPENAI_ADMIN_KEY=...
+    OPENAI_API_KEY=...
+
+- `OPENAI_ADMIN_KEY`: 今日どれだけ使ったか調べるための Admin key
+- `OPENAI_API_KEY`: 実際に AI を呼ぶための通常の API key
+
+Admin key は Organization レベルの強い credential なので、通常の API key と分離してください。
+
+### 3. AI を呼ぶ
+
+    ./shell/openai-quota-fuse.sh run "富士山の高さは？"
+
+これが基本形です。
+
+OpenAIQuotaFuse は内部で、残り quota を確認し、利用可能なモデルを選び、Responses API を呼びます。無料 quota に収まるモデルがなければ API を呼ばずに停止します。
+
+出力イメージ:
+
+    quota: OK (conservative estimate 1068 tokens)
+    model: gpt-5.6-luna
+
+    富士山の標高は3,776メートルです。
+
+これで最初の一歩は完了です。
+
+## 少しだけ指定したい
+
+安い・軽いタスク向けの候補を優先:
+
+    ./shell/openai-quota-fuse.sh run -q low "1+1は？"
+
+モデルを自分で指定:
+
+    ./shell/openai-quota-fuse.sh run -m gpt-5.6-luna "1+1は？"
+
+最大出力を小さくする:
+
+    ./shell/openai-quota-fuse.sh run -o 256 "一言で説明して"
+
+`run` は入力サイズを安全側に概算し、`max-output-tokens` と合わせて必要 quota を見積もります。これは厳密な tokenizer ではなく、無料枠を過大評価しないための保守的な概算です。
+
+## 中身を確認したくなったら
+
+普段は `run` だけで構いません。以下は quota の状態や選択結果を自分で確認したいときの道具です。
+
+    # 今日の残りを見る
     ./shell/openai-quota-fuse.sh status
 
-Usage API の生レスポンスを確認:
-
-    ./shell/openai-quota-fuse.sh status --raw
-    ./shell/openai-quota-fuse.sh status -r
-
-同梱されている無料対象モデルレジストリと既定の選択順を確認:
-
+    # 対象モデルと選択プロファイルを見る
     ./shell/openai-quota-fuse.sh models
 
-指定した推定トークン数のリクエストが収まるか判定:
-
-    ./shell/openai-quota-fuse.sh check --model gpt-5.6-sol --estimated-tokens 8000
-    ./shell/openai-quota-fuse.sh check -m gpt-5.6-sol -t 8000
-
-`model-selection.json` の既定順で選択:
-
-    ./shell/openai-quota-fuse.sh select --estimated-tokens 8000
+    # 8000トークン必要だと仮定してモデルを選ぶ
     ./shell/openai-quota-fuse.sh select -t 8000
 
-呼び出しごとに候補を上書きすることもできます:
+    # 特定モデルで8000トークン使えるか確認する
+    ./shell/openai-quota-fuse.sh check -m gpt-5.6-sol -t 8000
 
-    ./shell/openai-quota-fuse.sh select -t 8000 \
-      -m gpt-5.6-luna \
-      -m gpt-5.6-terra
+Usage API の生レスポンスを見る場合:
 
-旧形式の `check MODEL TOKENS` と `select TOKENS [MODEL ...]` も互換性のため引き続き利用できます。
+    ./shell/openai-quota-fuse.sh status -r
 
-## サンプル
+## 仕組み
 
-そのまま試せる Shell サンプルを `examples/shell/` に置いています。
+OpenAI の無料対象モデルと quota group の上限は時間とともに変わるため、各実装へハードコードせず、共通の機械可読レジストリ `models.json` に集約します。`models.json` は無料枠の会計対象を広く保持し、自動選択で実際に使う候補は `model-selection.json` に分離します。
 
-    bash examples/shell/status.sh
-    bash examples/shell/check-request.sh
-    bash examples/shell/select-model.sh
+quota group は無料 quota の容量分類です。モデル品質やタスク難易度の profile ではありません。
 
-`select-model.sh` は `model-selection.json` の既定候補を使います。
+現在の Shell 実装は、`models.json` に登録されたモデルに対する当日の Usage をすべて quota 消費として数えます。実際の incentive 適用量より残量を少なく見積もる可能性はありますが、無料残量を過大評価しないことを優先します。
 
 ## モデルポリシーの定期監査
 
-`models.json` は quota 会計のための対象モデル一覧、`model-selection.json` は実際に自動選択する候補一覧です。古いがまだ対象のモデルを会計対象から消すと Usage を取りこぼすため、この2つは分離しています。
-
-`scripts/audit-model-policy.sh` は、選択候補が会計レジストリに含まれていることと、レビュー期限を検証します。
-
     bash scripts/audit-model-policy.sh
 
-`.github/workflows/model-policy-audit.yml` でも毎週監査します。`model-selection.json` の既定レビュー間隔は30日で、期限を超えると Action が失敗し、無料対象、Deprecated 状態、API単価、同一quota group内で古い候補を残す理由を再確認するよう促します。
+`.github/workflows/model-policy-audit.yml` でも毎週監査します。`model-selection.json` の既定レビュー間隔は30日です。
 
-現在の Shell MVP は、`models.json` に登録されたモデルに対する当日の Usage をすべて quota 消費として数えます。実際の incentive 適用量より残量を少なく見積もる可能性はありますが、無料残量を過大評価しないことを優先します。
-
-`models.json` には一次資料 URL と `last_reviewed` を記録します。通常の quota 判定時に Help Center をスクレイピングすることはしません。
-
-言語共通のポリシーは `spec/QUOTA_POLICY.md`、PR #1 後の実装項目は [docs-ja/TODO.md](docs-ja/TODO.md) を参照してください。
+言語共通のポリシーは `spec/QUOTA_POLICY.md`、今後の実装項目は [docs-ja/TODO.md](docs-ja/TODO.md) を参照してください。
