@@ -4,6 +4,16 @@
 
 OpenAIQuotaFuse は、OpenAI API の無料トークン枠をできるだけ超えないようにして API を呼ぶための quota guard です。
 
+通常は OpenAI API を直接呼ぶ代わりに OpenAIQuotaFuse を通します。
+
+    直接呼ぶ:
+    あなた → OpenAI API
+
+    OpenAIQuotaFuse を使う:
+    あなた → quota確認 → モデル選択 → OpenAI API
+
+残り quota とモデル選択を毎回自分で考える必要を減らすことが目的です。
+
 ## まずこれだけ
 
 やりたいことは単純です。
@@ -17,6 +27,8 @@ OpenAIQuotaFuse は、OpenAI API の無料トークン枠をできるだけ超�
        呼ぶ      止める
 
 普段は `status` や `select` を自分で組み合わせる必要はありません。最初は `run` だけ覚えてください。
+
+現在の判定は、無料枠を過大評価しないことを優先した安全側の判定です。実際に利用できる無料枠より早く停止する場合があります。
 
 ### 1. ダウンロード
 
@@ -48,6 +60,10 @@ Admin key は Organization レベルの強い credential なので、通常の A
 
 OpenAIQuotaFuse は内部で、残り quota を確認し、利用可能なモデルを選び、Responses API を呼びます。無料 quota に収まるモデルがなければ API を呼ばずに停止します。
 
+既定では軽量・低コスト側の `low` profile を使い、次の順で候補を試します。
+
+    gpt-5.6-luna → gpt-5.6-terra → gpt-5.6-sol
+
 出力イメージ:
 
     quota: OK (conservative estimate 1068 tokens)
@@ -57,21 +73,27 @@ OpenAIQuotaFuse は内部で、残り quota を確認し、利用可能なモデ
 
 これで最初の一歩は完了です。
 
-## 少しだけ指定したい
+## 難しい仕事だけ high にする
 
-安い・軽いタスク向けの候補を優先:
+普通の利用では `-q low` を指定する必要はありません。`low` が既定値です。
 
-    ./shell/openai-quota-fuse.sh run -q low "1+1は？"
+品質を優先したい仕事だけ `high` を明示します。
 
-モデルを自分で指定:
+    ./shell/openai-quota-fuse.sh run -q high "この設計案の技術的な弱点を詳しくレビューして"
+
+`high` では現在、次の順で候補を試します。
+
+    gpt-5.6-sol → gpt-5.6-luna → gpt-5.6-terra
+
+モデルを自分で固定する場合:
 
     ./shell/openai-quota-fuse.sh run -m gpt-5.6-luna "1+1は？"
 
-最大出力を小さくする:
+最大出力を小さくする場合:
 
     ./shell/openai-quota-fuse.sh run -o 256 "一言で説明して"
 
-`run` は入力サイズを安全側に概算し、`max-output-tokens` と合わせて必要 quota を見積もります。これは厳密な tokenizer ではなく、無料枠を過大評価しないための保守的な概算です。
+`run` は現在、入力サイズを安全側にローカル概算し、`max-output-tokens` と合わせて必要 quota を見積もります。これは厳密な tokenizer ではありません。公式 API から input token 数を取得する方式への置き換えは TODO として管理しています。
 
 ## 中身を確認したくなったら
 
