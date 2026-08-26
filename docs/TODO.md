@@ -41,6 +41,10 @@
 - [x] Add repeatable `--context/-c FILE` for explicit UTF-8 text context and include that full effective input in token counting.
 - [x] Add named `--session/-s NAME` continuation by persisting the latest response ID and passing `previous_response_id` to both token counting and inference.
 - [x] Keep the supported Responses scope explicit: plain text, explicit text context, named sessions, and model/quality/effort/max-output/raw controls; tools, structured output, images, arbitrary fields, directory recursion, and implicit file upload remain unsupported until quota/cost semantics are defined.
+- [ ] Treat `status=incomplete` as a first-class non-success result: expose `incomplete_details.reason` and reasoning/visible token diagnostics without presenting truncated output as a normal completion.
+- [ ] Add explicit continuation for an incomplete response, e.g. `continue [RESPONSE_ID]`; when the ID is omitted, reuse the most recent locally recorded response that ended because of `max_output_tokens`.
+- [ ] Route continuation through the same `/responses/input_tokens` accounting, complimentary-quota reservation, model selection, and paid-budget fuse as a normal request; do not auto-continue without user action.
+- [ ] Add mocked E2E coverage for incomplete detection, persisted continuation state, explicit/default response IDs, and continuation quota/budget blocking.
 
 ## P0 — Annual prepaid-credit budget
 
