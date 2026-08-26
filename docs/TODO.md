@@ -8,6 +8,7 @@
 - [x] Add explicit long options with short aliases to `check` and `select` while retaining positional compatibility forms.
 - [x] Support `--model/-m`, `--estimated-tokens/-t`, and caller-selected `--quality/-q`; default quality is `low`.
 - [x] Keep complimentary quota groups separate from model quality/task difficulty.
+- [x] Prefer Terra over Luna for ordinary complimentary-quota execution while both consume the same high-volume token quota; retain Luna as the cheaper future paid-fallback candidate.
 - [ ] Decide whether legacy positional `check MODEL TOKENS` and `select TOKENS [MODEL ...]` should eventually be deprecated.
 
 ## P0 — `run` end-to-end flow
@@ -32,7 +33,7 @@
 - [ ] Default policy: complimentary quota first; paid execution only while the configured annual paid-use budget remains below `$5`; block a request that would exceed the cap.
 - [ ] Keep the annual paid-use budget configurable, with `$5` as the intended default.
 - [ ] Estimate paid cost from current model input/output pricing before execution and account actual usage afterward when available.
-- [ ] Prefer the configured `low` model order for ordinary paid fallback; explicit `high` remains caller-controlled.
+- [ ] Use a paid-fallback order that is cost-aware and separate from the complimentary-quota order; Luna should precede Terra for ordinary paid fallback while explicit `high` remains caller-controlled.
 - [ ] Determine the reliable source of truth for year-to-date paid spend; use explicit local/configured accounting rather than guessing if no official API suffices.
 - [ ] Define annual reset boundary and persistent accounting format.
 - [ ] Keep purchased-credit expiry handling separate from the annual cap; current purchased credits have a one-year expiry.
@@ -54,6 +55,7 @@
 
 - [ ] Re-check incentive eligibility, quota groups, availability/deprecation, and API pricing whenever the policy audit expires.
 - [ ] Re-evaluate whether each automatic-selection candidate still has a reason to exist relative to newer models.
+- [ ] Keep complimentary-quota ordering and paid-fallback ordering independently justified; token-quota efficiency and dollar-cost efficiency are different objectives.
 - [ ] Keep older active models in accounting even when removed from automatic selection.
 - [ ] Add tests ensuring every automatic-selection candidate exists in `models.json`.
 
@@ -84,6 +86,7 @@
 
 - Complimentary quota is always consumed first.
 - Paid fallback is bounded by the configured annual cap; intended default is `$5` per year.
+- Complimentary-quota model ordering optimizes capability per quota token; paid-fallback ordering optimizes capability/cost under the annual dollar budget.
 - Quota checks must not spend an inference call merely to choose a model. Input-token counting is a non-inference Responses API operation.
 - Complimentary quota groups are not model-quality/task-difficulty profiles.
 - Current OpenAI primary documentation and observed API behavior take precedence over stale assumptions.
