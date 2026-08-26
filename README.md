@@ -49,9 +49,9 @@ Select the first model, in caller-defined preference order, that has enough quot
 
 Runnable Shell examples are under `examples/shell/`:
 
-    ./examples/shell/status.sh
-    ./examples/shell/check-request.sh
-    ./examples/shell/select-model.sh
+    bash examples/shell/status.sh
+    bash examples/shell/check-request.sh
+    bash examples/shell/select-model.sh
 
 The selection example uses the preference order `gpt-5.6-sol` → `gpt-5.6-luna` → `gpt-5.6-terra` and asks QuotaFuse to choose the first candidate with enough remaining complimentary quota for an estimated 8,000-token request.
 
