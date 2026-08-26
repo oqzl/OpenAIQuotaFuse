@@ -18,11 +18,29 @@ OpenAIQuotaFuse は、OpenAI API の無料トークン枠を安全側に見積�
 
 ## モデル選択
 
-まず無料 quota を使います。既定の `low` は:
+`run` の既定 quality は `auto` です。実行前に小さな difficulty classifier を無料 quota 内で実行し、通常タスクは `low`、難しいタスクは `high` に振り分けます。
+
+    ./shell/openai-quota-fuse.sh run "英訳して: おはよう"
+    # quality: auto -> low
+
+    ./shell/openai-quota-fuse.sh run "このリポジトリ全体を設計レビューして大規模リファクタ案を作って"
+    # quality: auto -> high
+
+classifier は `gpt-5.6-luna` + low reasoning + 最大8 output tokens の小さな判定タスクです。classifier 自身についても `input_tokens + max_output_tokens` を無料 quota に予約できる場合だけ呼びます。classifier が実行できない、または `low` / `high` 以外を返した場合は、有料判定へ fallback せず `low` を使います。
+
+明示指定は自動判定より優先します。
+
+    -q low   # classifier を呼ばず low 固定
+    -q high  # classifier を呼ばず high 固定
+    -m MODEL # classifier を呼ばず指定モデル固定
+
+`select` は prompt を持たないため、自動難易度判定は行わず既定 `low` のままです。
+
+`low` の無料候補順は:
 
     gpt-5.6-terra → gpt-5.6-luna → gpt-5.6-sol
 
-Terra と Luna は high-volume の無料 token quota を共有するため、無料枠では quota token あたりの能力を優先して Terra を先にします。難しい仕事で `-q high` を明示した場合は:
+Terra と Luna は high-volume の無料 token quota を共有するため、無料枠では quota token あたりの能力を優先して Terra を先にします。`high` は:
 
     gpt-5.6-sol → gpt-5.6-terra → gpt-5.6-luna
 
@@ -60,13 +78,15 @@ Terra と Luna は high-volume の無料 token quota を共有するため、無
     ./shell/openai-quota-fuse.sh run -i "説明して"
     printf '%s\n' "説明して" | ./shell/openai-quota-fuse.sh run
     ./shell/openai-quota-fuse.sh run -i - < prompt.txt
+    ./shell/openai-quota-fuse.sh run -q low "軽い仕事として処理して"
+    ./shell/openai-quota-fuse.sh run -q high "高品質モデルを優先して"
     ./shell/openai-quota-fuse.sh run -m gpt-5.6-luna -o 256 "一言で説明して"
     ./shell/openai-quota-fuse.sh run -e high "よく考えて答えて"
     ./shell/openai-quota-fuse.sh run -r "Responses API の JSON をそのまま返して"
 
-`-e/--effort` は Responses API の `reasoning.effort` を指定します。`-q/--quality` とは独立です。`quality` はモデル選択順、`effort` は選ばれたモデル内部の推論量を制御します。指定可能値は `none`、`low`、`medium`、`high`、`xhigh`、`max`。省略時はモデル/API の既定値をそのまま使います。
+`-q/--quality` は `auto`、`low`、`high`。省略時は `auto` です。`-e/--effort` は Responses API の `reasoning.effort` を指定し、quality とは独立です。quality はモデル選択順、effort は選ばれたモデル内部の推論量を制御します。effort の指定可能値は `none`、`low`、`medium`、`high`、`xhigh`、`max`。省略時はモデル/API の既定値をそのまま使います。
 
-`-r/--raw` では stdout に抽出済み text ではなく Responses API の完全な JSON を出します。quota/model/usage の診断情報は stderr のままです。
+`-r/--raw` では stdout に抽出済み text ではなく Responses API の完全な JSON を出します。classifier の判定、quota/model/usage の診断情報は stderr に出します。
 
 Shell 版 P0 は plain text input と model/quality/effort/max-output/raw に意図的に限定します。tools、structured output schema、files/images、`previous_response_id`、任意の Responses API field を中途半端な generic proxy として通しません。それらは quota/accounting 上の意味を定義してから追加します。
 
@@ -83,7 +103,7 @@ Shell 版 P0 は plain text input と model/quality/effort/max-output/raw に意
 
 ## ポリシーと保守
 
-無料枠の会計対象は `models.json`、無料・有料の自動選択方針は `model-selection.json` に置きます。これらが古くなった場合は現在の OpenAI 一次資料を優先します。
+無料枠の会計対象は `models.json`、無料・有料の自動選択方針と classifier 設定は `model-selection.json` に置きます。これらが古くなった場合は現在の OpenAI 一次資料を優先します。
 
 incentive 固有の Usage API 挙動を検証し終えるまでは、登録モデルの Usage をすべて消費として数えます。金額会計は、OpenAI が billing と照合する用途で推奨している Organization Costs を使います。モデルポリシーは `bash scripts/audit-model-policy.sh` と週次 workflow で監査します。
 
