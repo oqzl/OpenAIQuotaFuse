@@ -18,11 +18,13 @@ Runtime scraping of OpenAI documentation or Billing UI is not part of quota deci
 
 A request must reserve enough capacity for the whole request. For `run`, input tokens are counted with `POST /v1/responses/input_tokens` and `max_output_tokens` is added before inference.
 
-Internal automatic-quality classification is a separate request and must independently reserve its own counted input tokens plus classifier `max_output_tokens` before dispatch.
+For the currently registered GPT-5.6 models, `max_output_tokens` is validated locally as 16 through 128,000. Values outside that range are rejected before API dispatch.
+
+Internal automatic-quality classification is a separate request and must independently reserve its own counted input tokens plus classifier `max_output_tokens` before dispatch. Token-count requests contain only fields accepted by `/responses/input_tokens`; response-only fields such as `max_output_tokens` are never copied into that request.
 
 ## Conservative complimentary accounting
 
-The Shell implementation sums all completion usage for models registered in each quota group. This includes usage generated outside OpenAIQuotaFuse when it appears in Organization Usage. This may understate remaining complimentary quota, but it avoids falsely claiming free capacity until incentive-specific Usage API behavior is validated.
+The canonical implementation sums all completion usage for models registered in each quota group. This includes usage generated outside OpenAIQuotaFuse when it appears in Organization Usage. This may understate remaining complimentary quota, but it avoids falsely claiming free capacity until incentive-specific Usage API behavior is validated.
 
 A configurable percentage of each daily quota is unavailable as a safety reserve. Default: 5%.
 
@@ -36,7 +38,7 @@ For `run` auto quality, OpenAIQuotaFuse may issue one small classifier request b
 
     classifier model: gpt-5.6-luna
     reasoning effort: low
-    max output tokens: 8
+    max output tokens: 16
     allowed output: low | high
     fallback: low
 
@@ -75,7 +77,13 @@ Complimentary ordering optimizes capability per shared quota token rather than A
 - `quality` determines model preference order, either explicitly or after auto classification.
 - `effort` controls reasoning behavior inside the selected model.
 
-Supported values are `none`, `low`, `medium`, `high`, `xhigh`, and `max`. When omitted, OpenAIQuotaFuse omits `reasoning.effort` from the user request so the current model/API default remains authoritative. The internal classifier has its own separately configured reasoning effort.
+Supported values for the currently registered GPT-5.6 models are `none`, `low`, `medium`, `high`, `xhigh`, and `max`. When omitted, OpenAIQuotaFuse omits `reasoning.effort` from the user request so the current model/API default remains authoritative. The internal classifier has its own separately configured reasoning effort. Invalid explicit or classifier effort values are rejected locally.
+
+## Context and sessions
+
+`run --context/-c FILE` accepts explicit UTF-8 text files. Their content is incorporated into the actual request input before `/responses/input_tokens` is called, so context is included in quota accounting. The option is repeatable. Directory recursion, glob expansion, binary ingestion, and implicit OpenAI Files/File Search upload are not part of this boundary.
+
+`run --session/-s NAME` stores the latest successful Responses API `response_id` locally and supplies it as `previous_response_id` on the next request with the same session name. The same `previous_response_id` is supplied to `/responses/input_tokens`, keeping token accounting aligned with the request that is subsequently dispatched. The local session file stores only the response ID and update timestamp, not a duplicate conversation transcript.
 
 ## Annual paid fallback
 
@@ -99,7 +107,7 @@ Before a paid user inference, the implementation counts input tokens for the pai
 
 Year-to-date actual spend is read from the official `GET /v1/organization/costs` endpoint using the Organization Admin key. OpenAI documents the Costs endpoint as the appropriate financial view for spend that should reconcile to billing.
 
-The Shell implementation starts at January 1 00:00 UTC, requests one-day buckets, follows `next_page`, and sums USD `amount.value` across the full UTC calendar year. Therefore API spend made through other scripts, applications, or direct `curl` calls contributes to the next paid-budget decision after OpenAI reports it in Organization Costs.
+The canonical implementation starts at January 1 00:00 UTC, requests one-day buckets, follows `next_page`, and sums USD `amount.value` across the full UTC calendar year. Therefore API spend made through other scripts, applications, or direct `curl` calls contributes to the next paid-budget decision after OpenAI reports it in Organization Costs.
 
 The reported Organization Costs amount is the authoritative financial floor. OpenAIQuotaFuse does not attempt to infer which reported cost came from this CLI.
 
@@ -123,17 +131,17 @@ The local JSON ledger defaults to:
 
 `OPENAI_QUOTA_FUSE_PAID_LEDGER` may override the path. A filesystem lock serializes paid reservations from concurrent local CLI processes sharing the ledger.
 
-`openai-quota-fuse.sh costs` exposes the official year-to-date Costs amount, the recent local guard, the effective budget spend, and the configured cap. `costs --raw/-r` prints the raw paginated Costs responses.
+`openai-quota-fuse.py costs` exposes the official year-to-date Costs amount, the recent local guard, the effective budget spend, and the configured cap. `costs --raw/-r` prints the raw paginated Costs responses.
 
 ## Prepaid credits and expiry
 
 Purchased prepaid credits are a billing balance, not the OpenAIQuotaFuse annual budget. OpenAI currently documents purchased credits as expiring after one year and notes that delayed billing can produce a negative balance.
 
-No reliable documented runtime API for prepaid balance plus grant-level expiry metadata is currently used by this project. The Shell implementation therefore does not scrape Billing UI, infer expiry dates, or implement automatic expiry burn-down. If a future official API exposes reliable grant/expiry metadata, burn-down may be added as an optional policy without weakening the annual cap.
+No reliable documented runtime API for prepaid balance plus grant-level expiry metadata is currently used by this project. The canonical implementation therefore does not scrape Billing UI, infer expiry dates, or implement automatic expiry burn-down. If a future official API exposes reliable grant/expiry metadata, burn-down may be added as an optional policy without weakening the annual cap.
 
 ## Responses API scope
 
-The Shell reference supports plain text user input, model/quality selection, automatic quality classification, `reasoning.effort`, `max_output_tokens`, and raw response output. Tools, structured-output schemas, files/images, previous responses, and arbitrary user-supplied Responses API fields are intentionally unsupported until their quota and paid-cost semantics are explicitly defined. The internal classifier may use fixed checked-in request fields such as `instructions`; this does not make the Shell reference a generic Responses API proxy.
+The canonical implementation supports plain text user input, explicit UTF-8 text context, named sessions through `previous_response_id`, model/quality selection, automatic quality classification, `reasoning.effort`, `max_output_tokens`, and raw response output. Tools, structured-output schemas, images, arbitrary user-supplied Responses API fields, directory recursion, and implicit Files/File Search upload are intentionally unsupported until their quota and paid-cost semantics are explicitly defined. The internal classifier may use fixed checked-in request fields such as `instructions`; this does not make the CLI a generic Responses API proxy.
 
 ## CLI option conventions
 
@@ -146,6 +154,8 @@ Every long-form command-line option must have a short alias. Canonical options i
     --estimated-tokens, -t
     --max-output-tokens, -o
     --raw, -r
+    --context, -c
+    --session, -s
     --help, -h
     --version, -v
 
