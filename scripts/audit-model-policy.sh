@@ -19,7 +19,10 @@ jq -e '.schema_version == 1 and (.default_candidates | type == "array") and (.re
 # Every automatic-selection candidate must also be present in the accounting registry.
 missing="$(jq -rn --slurpfile registry "$REGISTRY" --slurpfile selection "$SELECTION" '
   [ $registry[0].quota_groups[].models[] ] as $registered |
-  [ $selection[0].default_candidates[] | select(($registered | index(.)) == null) ] |
+  [ $selection[0].default_candidates[] as $candidate |
+    select(($registered | index($candidate)) == null) |
+    $candidate
+  ] |
   .[]?
 ')"
 if [[ -n "$missing" ]]; then
