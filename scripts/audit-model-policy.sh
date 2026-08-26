@@ -34,7 +34,6 @@ fi
 reviewed="$(jq -r '.last_reviewed' "$SELECTION")"
 interval="$(jq -r '.review_interval_days' "$SELECTION")"
 
-# Portable epoch conversion for macOS BSD date and GNU date.
 if reviewed_epoch="$(date -u -j -f '%Y-%m-%d' "$reviewed" '+%s' 2>/dev/null)"; then
   now_epoch="$(date -u '+%s')"
 else

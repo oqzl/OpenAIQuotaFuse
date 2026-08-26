@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-readonly VERSION="0.3.0-dev"
+readonly VERSION="0.4.0-dev"
 readonly USAGE_URL="https://api.openai.com/v1/organization/usage/completions"
 readonly SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 readonly REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
@@ -13,11 +13,23 @@ usage() {
 OpenAIQuotaFuse (Shell MVP)
 
 Usage:
-  openai-quota-fuse.sh status [--raw]
-  openai-quota-fuse.sh check MODEL TOKENS
-  openai-quota-fuse.sh select TOKENS [MODEL ...]
+  openai-quota-fuse.sh status [--raw|-r]
+  openai-quota-fuse.sh check --model MODEL --estimated-tokens TOKENS
+  openai-quota-fuse.sh select --estimated-tokens TOKENS [--quality PROFILE] [--model MODEL ...]
   openai-quota-fuse.sh models
   openai-quota-fuse.sh version
+
+Compatibility forms:
+  openai-quota-fuse.sh check MODEL TOKENS
+  openai-quota-fuse.sh select TOKENS [MODEL ...]
+
+Options:
+  -m, --model MODEL              Model to check or explicit selection candidate
+  -t, --estimated-tokens TOKENS Conservative token requirement for check/select
+  -q, --quality PROFILE          Selection profile: high, normal, low
+  -r, --raw                      Print raw Usage API response where supported
+  -h, --help                     Show help
+  -v, --version                  Show version
 
 Environment:
   OPENAI_ADMIN_KEY                  Admin key for Organization Usage API (required)
@@ -28,11 +40,11 @@ Environment:
   OPENAI_QUOTA_FUSE_SELECTION_FILE  Optional curated selection policy path
 
 Examples:
-  ./shell/openai-quota-fuse.sh status
-  ./shell/openai-quota-fuse.sh status --raw
-  ./shell/openai-quota-fuse.sh check gpt-5.6-sol 8000
-  ./shell/openai-quota-fuse.sh select 8000
-  ./shell/openai-quota-fuse.sh select 8000 gpt-5.6-sol gpt-5.6-luna gpt-5.6-terra
+  ./shell/openai-quota-fuse.sh status -r
+  ./shell/openai-quota-fuse.sh check -m gpt-5.6-sol -t 8000
+  ./shell/openai-quota-fuse.sh select -t 8000
+  ./shell/openai-quota-fuse.sh select -t 8000 -q low
+  ./shell/openai-quota-fuse.sh select -t 8000 -m gpt-5.6-luna -m gpt-5.6-terra
 USAGE
 }
 
@@ -92,7 +104,14 @@ validate_selection() {
   local file
   file="$(selection_file)"
   [[ -r "$file" ]] || { echo "error: selection policy not readable: $file" >&2; exit 2; }
-  jq -e '.schema_version == 1 and (.default_candidates | type == "array") and (.default_candidates | length > 0)' "$file" >/dev/null || {
+  jq -e '
+    .schema_version == 1 and
+    (.default_candidates | type == "array") and
+    (.default_candidates | length > 0) and
+    (.default_quality | type == "string") and
+    (.quality_profiles | type == "object") and
+    (.quality_profiles[.default_quality] | type == "array")
+  ' "$file" >/dev/null || {
     echo "error: invalid selection policy: $file" >&2
     exit 2
   }
@@ -168,7 +187,7 @@ available_for_group() {
 print_status() {
   local raw_flag="${1:-}" raw summary group used quota available
   raw="$(fetch_usage "$(utc_day_start_epoch)")"
-  if [[ "$raw_flag" == "--raw" ]]; then jq . <<<"$raw"; return 0; fi
+  if [[ "$raw_flag" == "--raw" || "$raw_flag" == "-r" ]]; then jq . <<<"$raw"; return 0; fi
   summary="$(summarize_usage "$raw")"
   printf 'OpenAIQuotaFuse status (UTC day)\n'
   printf 'Usage tier: %s | Safety reserve: %s%%\n' "$OPENAI_USAGE_TIER" "$OPENAI_QUOTA_RESERVE_PERCENT"
@@ -201,15 +220,26 @@ check_model() {
   return 4
 }
 
+selection_candidates() {
+  local quality="${1:-}" file
+  file="$(selection_file)"
+  validate_selection
+  if [[ -z "$quality" ]]; then quality="$(jq -r '.default_quality' "$file")"; fi
+  jq -er --arg quality "$quality" '.quality_profiles[$quality][]' "$file" 2>/dev/null || {
+    echo "error: unknown quality profile: $quality" >&2
+    return 2
+  }
+}
+
 select_model() {
-  local tokens="$1"; shift
+  local tokens="$1" quality="$2"; shift 2
   local raw summary model group used available
   local candidates=()
   [[ "$tokens" =~ ^[0-9]+$ ]] || { echo "error: TOKENS must be a non-negative integer" >&2; exit 2; }
 
   if (( $# == 0 )); then
-    validate_selection
-    while IFS= read -r model; do candidates+=("$model"); done < <(jq -r '.default_candidates[]' "$(selection_file)")
+    while IFS= read -r model; do candidates+=("$model"); done < <(selection_candidates "$quality")
+    (( ${#candidates[@]} > 0 )) || return 2
     set -- "${candidates[@]}"
   fi
 
@@ -232,9 +262,50 @@ select_model() {
 print_models() {
   jq -r '"Registry reviewed: \(.last_reviewed)\nSource: \(.source)\n", (.quota_groups | to_entries[] | "\(.key):\n" + (.value.models | map("  " + .) | join("\n")) + "\n")' "$(models_file)"
   if [[ -r "$(selection_file)" ]]; then
-    printf 'Default selection order (reviewed %s):\n' "$(jq -r '.last_reviewed' "$(selection_file)")"
-    jq -r '.default_candidates[] | "  " + .' "$(selection_file)"
+    validate_selection
+    printf 'Default quality: %s\n' "$(jq -r '.default_quality' "$(selection_file)")"
+    printf 'Quality profiles (reviewed %s):\n' "$(jq -r '.last_reviewed' "$(selection_file)")"
+    jq -r '.quality_profiles | to_entries[] | "  \(.key): \(.value | join(", "))"' "$(selection_file)"
   fi
+}
+
+parse_check() {
+  local model="" tokens=""
+  if [[ $# -eq 2 && "$1" != -* ]]; then
+    check_model "$1" "$2"
+    return
+  fi
+  while (( $# > 0 )); do
+    case "$1" in
+      -m|--model) [[ $# -ge 2 ]] || { usage >&2; exit 2; }; model="$2"; shift 2 ;;
+      -t|--estimated-tokens) [[ $# -ge 2 ]] || { usage >&2; exit 2; }; tokens="$2"; shift 2 ;;
+      -h|--help) usage; return ;;
+      *) echo "error: unknown check option: $1" >&2; usage >&2; exit 2 ;;
+    esac
+  done
+  [[ -n "$model" && -n "$tokens" ]] || { usage >&2; exit 2; }
+  check_model "$model" "$tokens"
+}
+
+parse_select() {
+  local tokens="" quality=""
+  local models=()
+  if (( $# >= 1 )) && [[ "$1" != -* ]]; then
+    tokens="$1"; shift
+    select_model "$tokens" "" "$@"
+    return
+  fi
+  while (( $# > 0 )); do
+    case "$1" in
+      -t|--estimated-tokens) [[ $# -ge 2 ]] || { usage >&2; exit 2; }; tokens="$2"; shift 2 ;;
+      -q|--quality) [[ $# -ge 2 ]] || { usage >&2; exit 2; }; quality="$2"; shift 2 ;;
+      -m|--model) [[ $# -ge 2 ]] || { usage >&2; exit 2; }; models+=("$2"); shift 2 ;;
+      -h|--help) usage; return ;;
+      *) echo "error: unknown select option: $1" >&2; usage >&2; exit 2 ;;
+    esac
+  done
+  [[ -n "$tokens" ]] || { usage >&2; exit 2; }
+  select_model "$tokens" "$quality" "${models[@]}"
 }
 
 main() {
@@ -245,18 +316,16 @@ main() {
     status)
       validate_config; shift
       [[ $# -le 1 ]] || { usage >&2; exit 2; }
-      [[ $# -eq 0 || "$1" == "--raw" ]] || { usage >&2; exit 2; }
+      [[ $# -eq 0 || "$1" == "--raw" || "$1" == "-r" ]] || { usage >&2; exit 2; }
       print_status "${1:-}"
       ;;
     check)
-      validate_config
-      [[ $# -eq 3 ]] || { usage >&2; exit 2; }
-      check_model "$2" "$3"
+      validate_config; shift
+      parse_check "$@"
       ;;
     select)
-      validate_config
-      [[ $# -ge 2 ]] || { usage >&2; exit 2; }
-      shift; select_model "$@"
+      validate_config; shift
+      parse_select "$@"
       ;;
     models)
       validate_registry; print_models
