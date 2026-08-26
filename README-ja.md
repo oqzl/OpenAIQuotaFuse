@@ -45,6 +45,16 @@ Usage API の生レスポンスを確認:
       gpt-5.6-luna \
       gpt-5.6-terra
 
+## サンプル
+
+そのまま実行できる Shell サンプルを `examples/shell/` に置いています。
+
+    ./examples/shell/status.sh
+    ./examples/shell/check-request.sh
+    ./examples/shell/select-model.sh
+
+`select-model.sh` は `gpt-5.6-sol` → `gpt-5.6-luna` → `gpt-5.6-terra` の順をユーザーの品質優先順位として指定し、推定 8,000 tokens のリクエストを無料枠内で通せる最初の候補を選択します。
+
 現在の Shell MVP は、`models.json` に登録されたモデルに対する当日の Usage をすべて quota 消費として数えます。実際の incentive 適用量より残量を少なく見積もる可能性はありますが、無料残量を過大評価しないことを優先します。
 
 `models.json` には一次資料 URL と `last_reviewed` を記録します。通常の quota 判定時に Help Center をスクレイピングすることはしません。
