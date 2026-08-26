@@ -45,6 +45,16 @@ Select the first model, in caller-defined preference order, that has enough quot
       gpt-5.6-luna \
       gpt-5.6-terra
 
+## Examples
+
+Runnable Shell examples are under `examples/shell/`:
+
+    ./examples/shell/status.sh
+    ./examples/shell/check-request.sh
+    ./examples/shell/select-model.sh
+
+The selection example uses the preference order `gpt-5.6-sol` → `gpt-5.6-luna` → `gpt-5.6-terra` and asks QuotaFuse to choose the first candidate with enough remaining complimentary quota for an estimated 8,000-token request.
+
 The current Shell MVP deliberately counts all usage on registered models. This is conservative: it can stop early, but avoids overstating free capacity while incentive-specific accounting behavior is being validated against real Usage API responses.
 
 `models.json` records its primary source and `last_reviewed` date so stale policy data is visible. Runtime Help Center scraping is intentionally not part of quota decisions.
