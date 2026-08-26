@@ -16,25 +16,30 @@ The plugin does not change the model that is already running a Codex turn. A ski
 
 Fuse therefore governs secondary OpenAI API calls that Codex deliberately dispatches through the Fuse CLI. This is still useful for repository workflows that need extra inference, evaluation, classification, generation, or other API-backed substeps while keeping quota and paid fallback policy centralized.
 
-## Local installation
+## Installation
 
-Current Codex plugin discovery is marketplace-based. The following is the personal marketplace flow for a user-local development install.
+This repository includes `.agents/plugins/marketplace.json`. On current Codex CLI versions that expose `codex plugin`, prefer the marketplace commands instead of manually creating `~/plugins` and `~/.agents/plugins/marketplace.json`.
 
-### 1. Clone the repository and create the symlink
+    codex plugin marketplace add oqzl/OpenAIQuotaFuse
+    codex plugin add openai-quota-fuse@openai-quota-fuse
 
-`~/plugins` is not guaranteed to exist, so create the required directories first.
+Verify:
+
+    codex plugin list --json
+
+Restart Codex if necessary so it reloads plugin metadata.
+
+If your Codex distribution does not expose the `codex plugin` command, use the personal marketplace fallback below.
+
+### Manual installation
+
+`~/plugins` and `~/.agents/plugins` are not guaranteed to exist, so create them first.
 
     git clone https://github.com/oqzl/OpenAIQuotaFuse.git ~/src/OpenAIQuotaFuse
     mkdir -p ~/plugins ~/.agents/plugins
     ln -sfn ~/src/OpenAIQuotaFuse ~/plugins/openai-quota-fuse
 
-In `~/.agents/plugins/marketplace.json`, `./plugins/openai-quota-fuse` is resolved relative to the home directory and therefore points to `~/plugins/openai-quota-fuse`.
-
-### 2. Create or update the personal marketplace
-
-`~/.agents/plugins/marketplace.json` is also not guaranteed to exist.
-
-If it does not exist yet, create the complete file below:
+`~/.agents/plugins/marketplace.json` is also not guaranteed to exist. If it does not exist yet, create the complete file below:
 
     cat > ~/.agents/plugins/marketplace.json <<'JSON'
     {
@@ -59,32 +64,15 @@ If it does not exist yet, create the complete file below:
     }
     JSON
 
-If the file already exists, do not overwrite it. Append only this entry to the existing `plugins` array:
+If `~/.agents/plugins/marketplace.json` already exists, do not overwrite the file. Append only the `openai-quota-fuse` entry to its existing `plugins` array.
 
-    {
-      "name": "openai-quota-fuse",
-      "source": {
-        "source": "local",
-        "path": "./plugins/openai-quota-fuse"
-      },
-      "policy": {
-        "installation": "AVAILABLE",
-        "authentication": "ON_INSTALL"
-      },
-      "category": "Developer Tools"
-    }
+In the personal marketplace, `./plugins/openai-quota-fuse` resolves relative to the home directory and therefore points to `~/plugins/openai-quota-fuse`.
 
-After editing JSON manually, at minimum validate its syntax:
+Validate JSON after manual edits:
 
     python3 -m json.tool ~/.agents/plugins/marketplace.json >/dev/null
 
-### 3. Reload Codex
-
-Restart Codex if it is already running so it reloads the personal marketplace. The personal marketplace is discovered implicitly from `~/.agents/plugins/marketplace.json`, so there is no separate need to run `codex plugin marketplace add` for this file.
-
-Use the Codex Plugin UI to verify discovery, or `codex plugin list --available --json` when the installed Codex CLI version exposes the plugin commands. Plugin CLI commands can change with Codex versions, so this guide does not assume a command that may not exist locally.
-
-This layout follows the current OpenAI plugin-creator and official-plugin personal marketplace convention.
+The personal marketplace is discovered implicitly from `~/.agents/plugins/marketplace.json`, so the manual path does not require a separate `codex plugin marketplace add` command.
 
 ## Configure credentials
 
