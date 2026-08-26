@@ -85,7 +85,7 @@ validate_registry() {
   jq -e '
     .schema_version == 1 and
     (.quota_groups | type == "object") and
-    ([.quota_groups[] | (.models | type == "array") and (.limits.tier_1_2 | type == "number") and (.limits.tier_3_5 | type == "number")] | all)
+    ([.quota_groups[] | (.models | type == "array") and (.daily_token_limits.tier_1_2 | type == "number") and (.daily_token_limits.tier_3_5 | type == "number")] | all)
   ' "$file" >/dev/null || {
     echo "error: invalid model registry: $file" >&2
     exit 2
@@ -116,7 +116,7 @@ quota_for_group() {
   local group="$1" key file
   file="$(models_file)"
   if (( OPENAI_USAGE_TIER <= 2 )); then key="tier_1_2"; else key="tier_3_5"; fi
-  jq -er --arg group "$group" --arg key "$key" '.quota_groups[$group].limits[$key]' "$file"
+  jq -er --arg group "$group" --arg key "$key" '.quota_groups[$group].daily_token_limits[$key]' "$file"
 }
 
 model_group() {
