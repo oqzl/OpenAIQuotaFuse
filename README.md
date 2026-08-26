@@ -2,83 +2,92 @@
 
 [日本語](README-ja.md)
 
-OpenAIQuotaFuse is an OpenAI-specific quota guard intended to keep API usage inside the complimentary daily token quota available to eligible data-sharing traffic.
+OpenAIQuotaFuse is a quota guard for calling the OpenAI API while conservatively staying inside the complimentary daily token quota available to eligible data-sharing traffic.
 
-The project will provide aligned implementations for Shell, Python 3, and Swift 6. The Shell CLI is the first reference implementation.
+## Quick start
 
-OpenAI's eligible models and quota-group limits change over time. They therefore live in the shared machine-readable `models.json` registry instead of being hard-coded independently in each implementation. `models.json` stays broad for accounting, while `model-selection.json` holds the smaller curated set actually used for automatic model selection.
+The normal path is deliberately simple:
 
-Quota groups describe complimentary quota capacity. They are not model-quality or task-difficulty profiles. OpenAIQuotaFuse keeps those concepts separate.
+    want to call OpenAI
+            ↓
+    OpenAIQuotaFuse
+            ↓
+     fits free quota?
+       ↓ YES  ↓ NO
+       call    stop
 
-## Shell MVP
+For ordinary use, start with `run`. You do not need to manually combine `status` and `select`.
 
-Requirements:
+### 1. Clone
 
-- Bash
-- curl
-- jq
-- an OpenAI Admin API key with access to the Organization Usage API
+    git clone https://github.com/oqzl/OpenAIQuotaFuse.git
+    cd OpenAIQuotaFuse
 
-Create the Admin key from the OpenAI Platform organization Admin Keys page. Admin keys are organization-level credentials and should be kept separate from normal inference API keys. `OPENAI_ADMIN_KEY` is used only for Usage API access; the planned `run` command will use a separate `OPENAI_API_KEY` for inference.
+Requirements: Bash, curl, and jq.
 
-Setup:
+### 2. Configure two API keys
 
     cp .env.example .env
     $EDITOR .env
 
-Check current conservative quota availability:
+Set:
+
+    OPENAI_ADMIN_KEY=...
+    OPENAI_API_KEY=...
+
+`OPENAI_ADMIN_KEY` reads Organization Usage. `OPENAI_API_KEY` is the normal inference key used by `run`. Keep the organization-level Admin credential separate from inference credentials.
+
+### 3. Run a prompt
+
+    ./shell/openai-quota-fuse.sh run "How high is Mount Fuji?"
+
+OpenAIQuotaFuse checks remaining quota, selects an eligible model, and calls the Responses API. If no candidate fits the conservative quota estimate, it stops before inference.
+
+Example:
+
+    quota: OK (conservative estimate 1068 tokens)
+    model: gpt-5.6-luna
+
+    Mount Fuji is 3,776 meters high.
+
+## A little more control
+
+Prefer the low-cost/light-task profile:
+
+    ./shell/openai-quota-fuse.sh run -q low "What is 1+1?"
+
+Force a model:
+
+    ./shell/openai-quota-fuse.sh run -m gpt-5.6-luna "What is 1+1?"
+
+Reduce the maximum output allowance:
+
+    ./shell/openai-quota-fuse.sh run -o 256 "Answer in one sentence"
+
+`run` conservatively estimates input tokens and adds `max-output-tokens` before selecting/checking quota. This is intentionally not an exact tokenizer; the guard prefers stopping early to overstating complimentary capacity.
+
+## Inspection commands
+
+These are useful when you want to inspect what `run` is doing:
 
     ./shell/openai-quota-fuse.sh status
-
-Inspect the raw Usage API response:
-
-    ./shell/openai-quota-fuse.sh status --raw
+    ./shell/openai-quota-fuse.sh models
+    ./shell/openai-quota-fuse.sh select -t 8000
+    ./shell/openai-quota-fuse.sh check -m gpt-5.6-sol -t 8000
     ./shell/openai-quota-fuse.sh status -r
 
-Show the bundled accounting registry and current default selection order:
+## How policy is stored
 
-    ./shell/openai-quota-fuse.sh models
+Eligible models and quota-group limits change over time, so they live in the shared machine-readable `models.json` registry rather than being independently hard-coded. `models.json` stays broad for accounting, while `model-selection.json` contains the curated candidates used for automatic selection.
 
-Check whether an estimated request fits:
+Quota groups describe complimentary quota capacity. They are not model-quality or task-difficulty profiles.
 
-    ./shell/openai-quota-fuse.sh check --model gpt-5.6-sol --estimated-tokens 8000
-    ./shell/openai-quota-fuse.sh check -m gpt-5.6-sol -t 8000
-
-Select using the curated default order in `model-selection.json`:
-
-    ./shell/openai-quota-fuse.sh select --estimated-tokens 8000
-    ./shell/openai-quota-fuse.sh select -t 8000
-
-Or override the candidates for one call:
-
-    ./shell/openai-quota-fuse.sh select -t 8000 \
-      -m gpt-5.6-luna \
-      -m gpt-5.6-terra
-
-The original positional `check MODEL TOKENS` and `select TOKENS [MODEL ...]` forms remain supported for compatibility.
-
-## Examples
-
-Runnable Shell examples are under `examples/shell/`:
-
-    bash examples/shell/status.sh
-    bash examples/shell/check-request.sh
-    bash examples/shell/select-model.sh
-
-`select-model.sh` uses the current curated defaults from `model-selection.json`.
+The Shell implementation deliberately counts all usage on registered models. This is conservative: it may stop early, but avoids overstating free capacity while incentive-specific accounting behavior is being validated.
 
 ## Periodic model-policy audit
 
-`models.json` is the accounting registry; `model-selection.json` is the curated automatic-selection set. These are deliberately separate because removing an old-but-still-eligible model from accounting could undercount Usage and overstate remaining free quota.
-
-Run the local audit with:
-
     bash scripts/audit-model-policy.sh
 
-`.github/workflows/model-policy-audit.yml` also runs every week. The current review interval is 30 days. Once stale, the workflow fails and prompts a review of incentive eligibility, deprecation status, API pricing, and whether an older candidate still has a reason to exist relative to newer models in the same quota group.
+`.github/workflows/model-policy-audit.yml` also runs weekly. The current review interval is 30 days.
 
-The current Shell MVP deliberately counts all usage on registered models. This is conservative: it can stop early, but avoids overstating free capacity while incentive-specific accounting behavior is being validated against real Usage API responses.
-
-`models.json` records its primary source and `last_reviewed` date so stale policy data is visible. Runtime Help Center scraping is intentionally not part of quota decisions.
-
-See `spec/QUOTA_POLICY.md` for the language-neutral policy and [docs/TODO.md](docs/TODO.md) for implementation work remaining after PR #1.
+See `spec/QUOTA_POLICY.md` for the language-neutral policy and [docs/TODO.md](docs/TODO.md) for remaining implementation work.
