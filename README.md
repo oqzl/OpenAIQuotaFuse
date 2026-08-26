@@ -35,7 +35,7 @@ See [docs/CODEX_PLUGIN.md](docs/CODEX_PLUGIN.md) for local marketplace installat
       "Compare three migration strategies for a distributed system and design a staged plan including rollback after failures"
     # quality: auto -> high
 
-The classifier uses `gpt-5.6-luna`, low reasoning effort, and at most 8 output tokens. Its own `input_tokens + max_output_tokens` must fit complimentary quota before the classifier is called. Input-token counting sends only fields accepted by `/responses/input_tokens`; response-only fields such as `max_output_tokens` are not sent there. If classification cannot run or returns anything other than `low` / `high`, OpenAIQuotaFuse does not spend money on routing; it falls back to `low`.
+The classifier uses `gpt-5.6-luna`, low reasoning effort, and the Responses API minimum of 16 output tokens. Its own `input_tokens + max_output_tokens` must fit complimentary quota before the classifier is called. Input-token counting sends only fields accepted by `/responses/input_tokens`; response-only fields such as `max_output_tokens` are not sent there. If classification cannot run or returns anything other than `low` / `high`, OpenAIQuotaFuse does not spend money on routing; it falls back to `low`.
 
 Explicit choices override auto routing:
 
@@ -78,6 +78,8 @@ OpenAI does not currently provide a documented runtime API here for reliable pre
 Before inference, `run` calls `POST /v1/responses/input_tokens`, then reserves:
 
     input_tokens + max_output_tokens
+
+`-o/--max-output-tokens` is validated locally against the current GPT-5.6 Responses API bounds: 16 through 128,000 tokens. Invalid values are rejected before any API call.
 
 Start with an ordinary question:
 
