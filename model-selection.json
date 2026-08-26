@@ -1,0 +1,16 @@
+{
+  "schema_version": 1,
+  "last_reviewed": "2026-08-26",
+  "review_interval_days": 30,
+  "sources": {
+    "eligibility": "https://help.openai.com/en/articles/10306912-sharing-feedback-evals-and-api-data-with-openai",
+    "models": "https://developers.openai.com/api/docs/models/all",
+    "pricing": "https://developers.openai.com/api/docs/pricing"
+  },
+  "default_candidates": [
+    "gpt-5.6-sol",
+    "gpt-5.6-luna",
+    "gpt-5.6-terra"
+  ],
+  "policy": "Keep accounting coverage broad in models.json, but keep automatic selection candidates intentionally small. Review quality, price, deprecation status, and quota-group placement before adding or retaining a candidate."
+}
