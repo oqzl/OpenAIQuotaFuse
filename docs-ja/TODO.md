@@ -37,7 +37,7 @@
 - [x] actual usage を stderr に表示する。
 - [x] `--max-output-tokens/-o`、`--model/-m`、`--raw/-r`、`--input/-i` を実装する。
 - [x] `--effort/-e` で Responses API の `reasoning.effort` を指定し、モデル選択の `--quality/-q` とは分離する。
-- [x] Shell P0 は plain text + model/quality/effort/max-output/raw に限定し、tools / structured output / files/images / previous response / 任意 field は quota/cost semantics を定義するまで非対応とする。
+- [x] plain text + model/quality/effort/max-output/raw に限定し、tools / structured output / files/images / previous response / 任意 field は quota/cost semantics を定義するまで非対応とする。
 
 ## P0 — 年間プリペイド予算
 
@@ -76,29 +76,31 @@
 
 ## P1 — テスト
 
-- [ ] Usage API mock を含む Shell テストを拡充する。
-- [ ] UTC reset、tier、reserve、unknown model、quota 枯渇、candidate fallback を網羅する。
+- [x] quota grouping/reserve、pricing、output extraction、paid-ledger guard の Python unit test を追加する。
+- [x] input-token counting、input/stdin/raw、reasoning effort、自動 quality、明示 classifier bypass、Costs API spend、paid fallback、ledger completion、annual-cap blocking を mocked HTTP E2E で検証する。
+- [x] PR と `main` push の CI で Python syntax、unit、mocked E2E、plugin manifest JSON validation を実行する。
+- [x] Shell CI は wrapper smoke test のみにし、policy test は Python に一本化する。
+- [ ] UTC reset、tier、reserve、unknown model、quota 枯渇、candidate fallback をさらに深く網羅する。
 - [ ] long/short alias と候補順をテストする。
-- [x] input-token counting、input/stdin/raw、reasoning effort、actual usage diagnostics、自動 quality、明示 override bypass の mock test を追加する。
-- [x] annual paid budget の free-first / fallback / Costs API の外部支出 / cap blocking / persistence / 基本 paid order を mock test する。
 - [ ] annual reset、Costs pagination、legacy ledger migration、concurrent-process lock の境界テストを追加する。
-- [ ] Shell / Python / 将来の Swift で同じ policy fixture を実行する。
+- [ ] 将来の Swift 実装でも同じ policy fixture を再利用する。
 
 ## P1 — Python 3 実装
 
 - [x] `models.json` と `model-selection.json` を共有し、`spec/QUOTA_POLICY.md` の主要 semantics を実装する。
-- [x] Python 標準ライブラリで `run` / `status` / `costs` / `check` / `select` / `models` の有用な Shell CLI semantics を揃える。
+- [x] Python 標準ライブラリで `run` / `status` / `costs` / `check` / `select` / `models` の有用な CLI semantics を揃える。
 - [x] conservative reservation、auto-quality、reasoning effort、Organization Costs、年間 paid fallback、local lag guard を実装する。
-- [x] quota grouping/reserve、pricing、output extraction、paid-ledger guard の初期 unit test を追加する。
-- [ ] HTTP mock の E2E parity fixture を追加し、Shell / Python の両実装へ適用する。
+- [x] Python を正規実装とし、旧 Shell 実装を薄い互換 wrapper に置き換える。
+- [x] Python 実装に mocked HTTP E2E coverage を追加する。
 
 ## P1 — Codex プラグイン
 
 - [x] `.codex-plugin/plugin.json` と bundled `quota-fuse` Skill を追加する。
-- [x] plugin-facing execution surface は Python とし、Shell は Unix reference implementation として残す。
+- [x] plugin-facing かつ canonical execution surface は Python とし、Shell は Unix 互換 wrapper のみにする。
 - [x] local marketplace install と credential setup を英日で文書化する。
 - [x] plugin は Fuse 経由で dispatch された追加 API call を管理し、現在実行中の Codex turn の model を変更できないことを明記する。
-- [ ] 安定した standalone validator が開発環境で利用可能になったら plugin validation を CI に追加する。
+- [x] plugin manifest JSON validation を CI に追加する。
+- [ ] 安定した standalone Codex plugin validator が開発環境で利用可能になったら追加する。
 
 ## P2 — Swift 6 実装
 
