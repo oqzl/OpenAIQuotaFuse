@@ -66,8 +66,11 @@ async function authenticateAccess(request, env) {
 }
 
 function normalizeTeamDomain(value) {
-  const url = new URL(value);
-  if (url.protocol !== "https:") throw new Error("TEAM_DOMAIN must use HTTPS");
+  const raw = String(value).trim().replace(/\/+$/, "");
+  const url = new URL(raw.includes("://") ? raw : `https://${raw}`);
+  if (url.protocol !== "https:" || url.pathname !== "/") {
+    throw new Error("TEAM_DOMAIN must be a Cloudflare Access HTTPS origin or hostname");
+  }
   return url.origin;
 }
 

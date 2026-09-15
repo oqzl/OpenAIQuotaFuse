@@ -37,17 +37,13 @@ Deployment order:
 
 Deploy the code first without `OPENAI_ADMIN_KEY`, enable Access for all traffic, then add the Access configuration and Admin key. Do not put the Admin key on an unprotected Worker.
 
-Store these as Worker secrets:
+Configure `TEAM_DOMAIN` and `POLICY_AUD` as non-secret Worker variables in the Cloudflare dashboard. `TEAM_DOMAIN` accepts either the bare `<team-name>.cloudflareaccess.com` hostname or the full HTTPS origin. `wrangler.jsonc` sets `keep_vars: true` so dashboard-managed Access variables survive deploys.
 
-    npx wrangler secret put TEAM_DOMAIN
-    # https://<team-name>.cloudflareaccess.com
-
-    npx wrangler secret put POLICY_AUD
-    # Access application Audience (AUD) tag
+Keep only the OpenAI Admin key as a Worker Secret:
 
     npx wrangler secret put OPENAI_ADMIN_KEY
 
-Non-secret defaults live in `wrangler.jsonc`:
+Non-secret quota defaults remain in `wrangler.jsonc`:
 
     OPENAI_USAGE_TIER=1
     OPENAI_QUOTA_RESERVE_PERCENT=5

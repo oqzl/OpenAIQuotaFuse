@@ -37,17 +37,13 @@ Workers Static Assets は Cloudflare 内部の assets router を経由するた�
 
 最初は `OPENAI_ADMIN_KEY` を設定せずコードだけ deploy し、All traffic の Access を有効化してから Access 設定と Admin key を入れます。未保護 Worker に Admin key を置かないでください。
 
-次を Worker Secret として設定します。
+`TEAM_DOMAIN` と `POLICY_AUD` は非機密の Worker 変数として Cloudflare Dashboard 側に設定します。`TEAM_DOMAIN` は `<team-name>.cloudflareaccess.com` の裸ホスト名でも、完全な HTTPS origin でも受け付けます。`wrangler.jsonc` は `keep_vars: true` にして、Dashboard 管理の Access 変数を deploy で消さないようにします。
 
-    npx wrangler secret put TEAM_DOMAIN
-    # https://<team-name>.cloudflareaccess.com
-
-    npx wrangler secret put POLICY_AUD
-    # Access application の Audience (AUD) tag
+OpenAI Admin key だけは Worker Secret にします。
 
     npx wrangler secret put OPENAI_ADMIN_KEY
 
-非機密の既定値は `wrangler.jsonc` に置きます。
+quota の非機密な既定値は引き続き `wrangler.jsonc` に置きます。
 
     OPENAI_USAGE_TIER=1
     OPENAI_QUOTA_RESERVE_PERCENT=5

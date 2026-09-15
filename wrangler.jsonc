@@ -5,6 +5,7 @@
   "main": "./src/worker.js",
   "workers_dev": false,
   "preview_urls": true,
+  "keep_vars": true,
   "assets": {
     "directory": "./web",
     "binding": "ASSETS",
