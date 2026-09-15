@@ -1,0 +1,19 @@
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "openai-quota-fuse",
+  "compatibility_date": "2026-09-15",
+  "main": "./src/worker.js",
+  "workers_dev": false,
+  "preview_urls": true,
+  "assets": {
+    "directory": "./web",
+    "binding": "ASSETS",
+    "run_worker_first": ["/api/*"],
+    "not_found_handling": "single-page-application"
+  },
+  "vars": {
+    "OPENAI_USAGE_TIER": "1",
+    "OPENAI_QUOTA_RESERVE_PERCENT": "5",
+    "OPENAI_ANNUAL_PAID_BUDGET_USD": "5"
+  }
+}

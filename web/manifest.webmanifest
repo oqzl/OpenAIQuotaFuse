@@ -1,0 +1,25 @@
+{
+  "id": "./",
+  "name": "OpenAIQuotaFuse",
+  "short_name": "QuotaFuse",
+  "description": "OpenAIQuotaFuse usage viewer",
+  "start_url": "./",
+  "scope": "./",
+  "display": "standalone",
+  "background_color": "#f4f4f1",
+  "theme_color": "#f4f4f1",
+  "icons": [
+    {
+      "src": "./icons/icon-192.svg?v=__COMMIT_SHA__",
+      "sizes": "192x192",
+      "type": "image/svg+xml",
+      "purpose": "any maskable"
+    },
+    {
+      "src": "./icons/icon-512.svg?v=__COMMIT_SHA__",
+      "sizes": "512x512",
+      "type": "image/svg+xml",
+      "purpose": "any maskable"
+    }
+  ]
+}

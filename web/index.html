@@ -1,0 +1,72 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no,viewport-fit=cover">
+  <meta name="theme-color" content="#f4f4f1">
+  <meta name="mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="default">
+  <meta name="apple-mobile-web-app-title" content="QuotaFuse">
+  <meta name="format-detection" content="telephone=no">
+  <meta name="description" content="OpenAIQuotaFuse usage viewer">
+  <title>OpenAIQuotaFuse</title>
+
+  <link rel="manifest" href="./manifest.webmanifest?v=__COMMIT_SHA__">
+  <link rel="icon" href="./icons/icon-192.svg?v=__COMMIT_SHA__" type="image/svg+xml">
+  <link rel="apple-touch-icon" href="./icons/icon-192.svg?v=__COMMIT_SHA__">
+  <link rel="stylesheet" href="./css/style.css?v=__COMMIT_SHA__">
+</head>
+<body>
+  <main class="shell">
+    <header class="header">
+      <div>
+        <p class="eyebrow">OPENAI QUOTA VIEWER</p>
+        <h1>OpenAIQuotaFuse</h1>
+        <p class="subtitle">Conservative complimentary-token usage and official year-to-date API costs.</p>
+      </div>
+      <button id="refresh" type="button">Refresh</button>
+    </header>
+
+    <section class="statusbar" aria-live="polite">
+      <span id="status">Loading…</span>
+      <span id="identity"></span>
+    </section>
+
+    <section id="summary" class="summary" aria-label="Quota summary"></section>
+
+    <section class="panel">
+      <div class="panel-heading">
+        <div>
+          <p class="eyebrow">TODAY BY MODEL</p>
+          <h2>Observed usage</h2>
+        </div>
+        <span id="updated" class="muted"></span>
+      </div>
+      <div class="table-wrap">
+        <table>
+          <thead>
+            <tr>
+              <th>Model</th>
+              <th>Service tier</th>
+              <th>Quota group</th>
+              <th class="numeric">Input</th>
+              <th class="numeric">Output</th>
+              <th class="numeric">Total</th>
+            </tr>
+          </thead>
+          <tbody id="models"></tbody>
+        </table>
+      </div>
+    </section>
+
+    <footer>
+      Access is restricted by Cloudflare Access. The OpenAI Admin API key remains in the Worker only.
+      The web viewer shows official Organization Costs, but cannot see the CLI-local recent paid guard used by Fuse budget enforcement.<br>
+      Build __COMMIT_SHA__
+    </footer>
+  </main>
+
+  <script type="module" src="./js/main.js?v=__COMMIT_SHA__"></script>
+</body>
+</html>

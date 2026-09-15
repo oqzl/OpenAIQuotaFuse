@@ -16,6 +16,53 @@ Python 3 CLI を正規実装とし、Codex プラグインからもこれを実�
 
 `OPENAI_ADMIN_KEY` は Organization Usage と Organization Costs の取得だけに使います。Organization Owner は API Platform の Organization settings → Admin keys から作成できます: https://platform.openai.com/settings/organization/admin-keys 。通常の project `OPENAI_API_KEY` は input token 数の取得と推論に使い、Admin key とは分離してください。
 
+## Webビューアー
+
+このリポジトリには、quota と cost を読み取り専用で確認するための installable PWA を `web/` 配下に含めます。
+
+- `web/` を PWA の正規ソースかつ Cloudflare Workers Static Assets の公開ルートとします。
+- `src/worker.js` は `/api/*` だけを処理し、`OPENAI_ADMIN_KEY` で Organization Usage / Costs を読みます。
+- Admin key は Worker Secret にだけ置き、ブラウザ JavaScript へは一切渡しません。
+- 表示上の quota 計算には CLI と同じ `models.json` / `model-selection.json` を使います。
+- Webビューアーは推論を実行せず、Fuse policy も変更しません。
+
+Worker 全体を Cloudflare Access で保護します。Identity Provider は Cloudflare、account member 制限を有効にし、この Worker の All traffic に `Cloudflare account` policy を設定します。API 側でも `Cf-Access-Jwt-Assertion` の署名、team domain、application AUD を検証してから OpenAI API を呼びます。
+
+Workers Static Assets は Cloudflare 内部の assets router を経由するため、API は `ctx.access` に依存せず Access JWT を明示検証します。
+
+導入順序:
+
+    npm install
+    npx wrangler deploy
+
+最初は `OPENAI_ADMIN_KEY` を設定せずコードだけ deploy し、All traffic の Access を有効化してから Access 設定と Admin key を入れます。未保護 Worker に Admin key を置かないでください。
+
+次を Worker Secret として設定します。
+
+    npx wrangler secret put TEAM_DOMAIN
+    # https://<team-name>.cloudflareaccess.com
+
+    npx wrangler secret put POLICY_AUD
+    # Access application の Audience (AUD) tag
+
+    npx wrangler secret put OPENAI_ADMIN_KEY
+
+非機密の既定値は `wrangler.jsonc` に置きます。
+
+    OPENAI_USAGE_TIER=1
+    OPENAI_QUOTA_RESERVE_PERCENT=5
+    OPENAI_ANNUAL_PAID_BUDGET_USD=5
+
+Workers Builds は次を使います。
+
+    Build command:  npm run build
+    Deploy command: npx wrangler deploy
+    Production branch: main
+
+`npm run build` は `__COMMIT_SHA__` を PWA app shell 全体へ stamp し、asset URL、manifest/icon URL、Service Worker registration、cache identity、画面上の build 表示を同じ deployment revision に揃えます。
+
+Webビューアーは Organization Costs の公式な年初来金額を表示できますが、CLI ローカルの recent paid ledger は読めません。そのため画面の「official remaining」は参考値であり、CLI の保守的 guard が使う実効 paid budget ではありません。
+
 ## Codex プラグイン
 
 このリポジトリには Codex plugin manifest と bundled `quota-fuse` Skill も含まれます。Codex から quota / costs の確認、policy に沿った model 選択、Fuse policy を通した追加 OpenAI API call の dispatch ができます。

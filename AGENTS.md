@@ -35,3 +35,14 @@ Before completing a development task, explicitly review:
 - `model-selection.json` / `models.json` when model or quota policy changed.
 
 Paired English/Japanese baseline documents should remain semantically synchronized.
+
+## Web viewer
+
+- `web/` is the canonical PWA source and Cloudflare Static Assets root. Do not introduce `dist/`, `public/`, or another deploy root for cache busting.
+- Keep all browser runtime assets under `web/` and use the same stamped Git commit SHA for asset URLs, manifest/icon URLs, Service Worker registration/cache identity, and visible build identity.
+- The web viewer is read-only and observational. It must not become a second inference/policy execution implementation.
+- `src/worker.js` may reproduce only the display arithmetic needed to present the registries; `spec/QUOTA_POLICY.md` and the Python CLI remain authoritative for execution.
+- `OPENAI_ADMIN_KEY` must remain a Worker secret. Never expose it in `web/`, browser storage, HTML, logs, or responses.
+- Protect the whole Worker with Cloudflare Access using Cloudflare as IdP and the Cloudflare Account Member policy. Do not add a separate application email allowlist.
+- Because Workers Static Assets do not pass `ctx.access` through the internal assets router to the user Worker, `/api/*` must validate `Cf-Access-Jwt-Assertion` against `TEAM_DOMAIN` and `POLICY_AUD`.
+- The web viewer cannot see the CLI-local recent paid ledger. Never label official Costs remaining as the effective Fuse budget.

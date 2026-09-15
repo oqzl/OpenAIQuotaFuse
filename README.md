@@ -16,6 +16,53 @@ The Python 3 CLI is the canonical implementation and the execution surface used 
 
 `OPENAI_ADMIN_KEY` is used only for Organization Usage and Costs. Organization Owners can create an Admin API key from the API Platform dashboard under Organization settings → Admin keys: https://platform.openai.com/settings/organization/admin-keys . Keep it separate from the normal project `OPENAI_API_KEY`, which is used for input-token counting and inference.
 
+## Web viewer
+
+This repository also ships an installable PWA under `web/` for read-only quota and cost inspection.
+
+- `web/` is the canonical PWA source and Cloudflare Workers Static Assets root.
+- `src/worker.js` handles only `/api/*` and reads Organization Usage / Costs with `OPENAI_ADMIN_KEY`.
+- The Admin key is a Worker secret and is never sent to browser JavaScript.
+- The viewer uses the same checked-in `models.json` / `model-selection.json` registries as the CLI for display-time quota arithmetic.
+- The viewer intentionally does not execute inference or change Fuse policy.
+
+The entire Worker must be protected by Cloudflare Access. Use Cloudflare as the identity provider with account-member restriction enabled, then protect this Worker for all traffic with the `Cloudflare account` policy option. The API also validates the signed `Cf-Access-Jwt-Assertion` against the Access team domain and application AUD before calling OpenAI.
+
+Because Workers Static Assets run behind Cloudflare's internal assets router, the API does not rely on `ctx.access`; it validates the Access JWT explicitly.
+
+Deployment order:
+
+    npm install
+    npx wrangler deploy
+
+Deploy the code first without `OPENAI_ADMIN_KEY`, enable Access for all traffic, then add the Access configuration and Admin key. Do not put the Admin key on an unprotected Worker.
+
+Store these as Worker secrets:
+
+    npx wrangler secret put TEAM_DOMAIN
+    # https://<team-name>.cloudflareaccess.com
+
+    npx wrangler secret put POLICY_AUD
+    # Access application Audience (AUD) tag
+
+    npx wrangler secret put OPENAI_ADMIN_KEY
+
+Non-secret defaults live in `wrangler.jsonc`:
+
+    OPENAI_USAGE_TIER=1
+    OPENAI_QUOTA_RESERVE_PERCENT=5
+    OPENAI_ANNUAL_PAID_BUDGET_USD=5
+
+Workers Builds should use:
+
+    Build command:  npm run build
+    Deploy command: npx wrangler deploy
+    Production branch: main
+
+`npm run build` stamps `__COMMIT_SHA__` across the PWA app shell so asset URLs, manifest/icon URLs, Service Worker registration, cache identity, and the visible build label all share one deployment revision.
+
+The web viewer can show official year-to-date Organization Costs, but it cannot read the CLI-local recent paid ledger. Therefore its displayed official remaining dollars are informational and are not the effective paid budget used by the CLI's conservative guard.
+
 ## Codex plugin
 
 This repository also contains a Codex plugin manifest and bundled `quota-fuse` Skill. The plugin lets Codex inspect quota/costs, select a policy-approved model, or dispatch a secondary OpenAI API request through the Fuse policy.

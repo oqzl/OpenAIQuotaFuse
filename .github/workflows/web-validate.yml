@@ -1,0 +1,43 @@
+name: Web validation
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+jobs:
+  web:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+      - name: Install dependencies
+        run: npm install --ignore-scripts
+      - name: Check JavaScript syntax
+        run: |
+          node --check src/worker.js
+          node --check web/js/main.js
+          node --check web/sw.js
+      - name: Check configuration
+        run: |
+          python3 -m json.tool package.json >/dev/null
+          python3 -m json.tool web/manifest.webmanifest >/dev/null
+          python3 - <<'PY'
+          import json
+          with open("wrangler.jsonc") as f:
+              config = json.load(f)
+          assert config["assets"]["directory"] == "./web"
+          assert config["assets"]["run_worker_first"] == ["/api/*"]
+          assert config["workers_dev"] is False
+          assert config["preview_urls"] is True
+          PY
+      - name: Check app shell
+        run: |
+          test -f web/index.html
+          test -f web/css/style.css
+          test -f web/js/main.js
+          test -f web/sw.js
+          test -f web/icons/icon-192.svg
+          test -f web/icons/icon-512.svg
