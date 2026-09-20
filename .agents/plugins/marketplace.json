@@ -1,0 +1,21 @@
+{
+  "name": "openai-quota-fuse",
+  "interface": {
+    "displayName": "OpenAIQuotaFuse"
+  },
+  "plugins": [
+    {
+      "name": "openai-quota-fuse",
+      "source": {
+        "source": "local",
+        "path": "./"
+      },
+      "policy": {
+        "installation": "AVAILABLE",
+        "authentication": "ON_INSTALL",
+        "products": ["CODEX"]
+      },
+      "category": "Developer Tools"
+    }
+  ]
+}

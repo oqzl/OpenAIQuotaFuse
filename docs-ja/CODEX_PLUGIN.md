@@ -8,7 +8,7 @@ OpenAIQuotaFuse は Codex プラグインとしてインストールできます
 
 Codex Skill から shell command は呼べるため、技術的には Bash を捨てる必要はありません。ただしプラグインの境界としては Python の方が適しています。`curl` / `jq` の追加依存を外せて、主要な Codex host platform で扱いやすく、将来の plugin integration からも安定した実装面として利用できるためです。quota policy を `SKILL.md` 側へ複製する必要もありません。
 
-Shell 版は Unix 環境向けの dependency-light reference として残します。Python / Shell はどちらも `models.json`、`model-selection.json`、`spec/QUOTA_POLICY.md` を共有します。
+Shell 版は Unix 環境向けの薄い互換 wrapper として残します。Python / Shell はどちらも `models.json`、`model-selection.json`、`spec/QUOTA_POLICY.md` を共有します。
 
 ## 重要な責務境界
 
@@ -16,35 +16,63 @@ Shell 版は Unix 環境向けの dependency-light reference として残しま�
 
 したがって Fuse が管理するのは、Codex が明示的に Fuse CLI 経由で dispatch する追加の OpenAI API call です。repository workflow 内の追加推論、評価、分類、生成などを、quota と paid fallback policy の管理下に置く用途を想定します。
 
-## ローカルインストール
+## インストール
 
-現在の Codex plugin discovery は marketplace ベースです。ユーザー単位の開発用インストール例:
+このリポジトリには `.agents/plugins/marketplace.json` を含めています。`codex plugin` command が使える現行Codex CLIでは、手で `~/plugins` や `~/.agents/plugins/marketplace.json` を作るより、まず marketplace command を使います。
 
-1. このリポジトリを固定場所へ clone する。
-2. `~/plugins/openai-quota-fuse` へ symlink する。
-3. `~/.agents/plugins/marketplace.json` に `openai-quota-fuse` entry を追加する。
-4. 認識されなければ Codex を再起動する。
+    codex plugin marketplace add oqzl/OpenAIQuotaFuse
+    codex plugin add openai-quota-fuse@openai-quota-fuse
+
+確認:
+
+    codex plugin list --json
+
+Codex が起動中なら、必要に応じて再起動して plugin 情報を再読込します。
+
+`codex plugin` command 自体が存在しない古い／異なる配布版では、以下の personal marketplace 手順を使います。
+
+### 手動インストール
+
+`~/plugins` と `~/.agents/plugins` は最初から存在するとは限らないため、先に作成します。
 
     git clone https://github.com/oqzl/OpenAIQuotaFuse.git ~/src/OpenAIQuotaFuse
     mkdir -p ~/plugins ~/.agents/plugins
     ln -sfn ~/src/OpenAIQuotaFuse ~/plugins/openai-quota-fuse
 
-既存の `plugins` 配列を消さず、次の entry を追加します。
+`~/.agents/plugins/marketplace.json` も最初から存在するとは限りません。まだ無い場合は次の完全な JSON を作成します。
 
+    cat > ~/.agents/plugins/marketplace.json <<'JSON'
     {
-      "name": "openai-quota-fuse",
-      "source": {
-        "source": "local",
-        "path": "./plugins/openai-quota-fuse"
+      "name": "local",
+      "interface": {
+        "displayName": "Local Plugins"
       },
-      "policy": {
-        "installation": "AVAILABLE",
-        "authentication": "ON_INSTALL"
-      },
-      "category": "Developer Tools"
+      "plugins": [
+        {
+          "name": "openai-quota-fuse",
+          "source": {
+            "source": "local",
+            "path": "./plugins/openai-quota-fuse"
+          },
+          "policy": {
+            "installation": "AVAILABLE",
+            "authentication": "ON_INSTALL"
+          },
+          "category": "Developer Tools"
+        }
+      ]
     }
+    JSON
+
+既に `~/.agents/plugins/marketplace.json` がある場合はファイル全体を上書きせず、既存の `plugins` 配列へ `openai-quota-fuse` entry だけを追加します。
 
 `~/.agents/plugins/marketplace.json` 内の `./plugins/openai-quota-fuse` は home directory 基準で `~/plugins/openai-quota-fuse` を指します。
+
+手編集後は JSON の構文を確認します。
+
+    python3 -m json.tool ~/.agents/plugins/marketplace.json >/dev/null
+
+personal marketplace は `~/.agents/plugins/marketplace.json` から暗黙に発見されるため、この手動手順では別途 `codex plugin marketplace add` を実行する必要はありません。
 
 ## credential
 
