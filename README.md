@@ -104,7 +104,11 @@ If no complimentary candidate can fit the conservative reservation, `run` may us
 
 The ordinary paid order is cost-aware and separate from complimentary selection:
 
-    gpt-5.6-luna → gpt-5.6-terra → gpt-5.6-sol
+    gpt-6-luna → gpt-6-sol
+
+Explicit `high` paid fallback is Sol-first:
+
+    gpt-6-sol → gpt-6-luna
 
 The annual cap uses the official Organization Costs API as its spend floor. This means API calls made outside OpenAIQuotaFuse are included after OpenAI reports them. Because Costs reporting can lag behind a just-finished request, OpenAIQuotaFuse also keeps a conservative local guard for recent paid requests. This can temporarily double-count some spend, which is intentional: avoiding accidental paid overrun is preferred over maximizing the `$5` budget.
 

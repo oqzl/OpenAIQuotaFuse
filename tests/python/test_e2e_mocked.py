@@ -201,7 +201,7 @@ class MockedE2ETest(unittest.TestCase):
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertEqual(result.stdout.strip(), "mock answer")
         self.assertIn("paid fallback reserved", result.stderr)
-        self.assertIn("model: gpt-5.6-luna", result.stderr)
+        self.assertIn("model: gpt-6-luna", result.stderr)
         ledger = json.loads(self.ledger.read_text(encoding="utf-8"))
         self.assertEqual(ledger["schema_version"], 2)
         self.assertEqual(len(ledger["requests"]), 1)

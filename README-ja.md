@@ -104,7 +104,11 @@ classifierもTerraを使います。TerraとLunaは同じ10M complimentary pool�
 
 通常の有料 fallback はドル単価を重視して無料枠とは別順序です。
 
-    gpt-5.6-luna → gpt-5.6-terra → gpt-5.6-sol
+    gpt-6-luna → gpt-6-sol
+
+明示 `high` の有料 fallback は Sol-first です。
+
+    gpt-6-sol → gpt-6-luna
 
 年間上限の実支出の正本には Organization Costs API を使います。そのため、OpenAIQuotaFuse を通さず `curl` や別アプリから直接使った API 支出も、OpenAI 側で Costs に計上された後は次回の判定に含まれます。
 

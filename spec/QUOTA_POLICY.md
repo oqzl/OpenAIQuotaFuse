@@ -87,15 +87,13 @@ Paid fallback is separate from complimentary quota and is attempted only after t
 
 Default paid `low` order is cost-aware:
 
-    gpt-5.6-luna
-    gpt-5.6-terra
-    gpt-5.6-sol
+    gpt-6-luna
+    gpt-6-sol
 
 Resolved `high` is Sol-first:
 
-    gpt-5.6-sol
-    gpt-5.6-terra
-    gpt-5.6-luna
+    gpt-6-sol
+    gpt-6-luna
 
 Before a paid user inference, the implementation counts input tokens for the paid candidate and computes a worst-case dollar reservation using current checked-in input/output prices and `max_output_tokens`. Long-context price multipliers documented by OpenAI are included.
 
