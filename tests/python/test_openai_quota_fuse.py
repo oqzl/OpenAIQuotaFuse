@@ -10,7 +10,7 @@ qf = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(qf)
 
 MODELS = {"quota_groups": {"standard": {"daily_token_limits": {"tier_1_2": 100, "tier_3_5": 200}, "models": ["sol"]}, "high_volume": {"daily_token_limits": {"tier_1_2": 1000, "tier_3_5": 2000}, "models": ["terra", "luna"]}}}
-SELECTION = {"quality_profiles": {"low": ["terra", "luna", "sol"], "high": ["sol", "terra", "luna"]}, "paid_fallback": {"pricing_usd_per_million_tokens": {"luna": {"input": .2, "output": 1.2}}, "long_context_threshold_input_tokens": 272000, "long_context_input_multiplier": 2.0, "long_context_output_multiplier": 1.5}}
+SELECTION = {"quality_profiles": {"low": ["terra", "astra"], "high": ["astra", "terra"]}, "reasoning_effort_constraints": {"astra": {"unsupported": ["none"]}}, "paid_fallback": {"quality_profiles": {"low": ["luna"], "high": ["sol"]}, "pricing_usd_per_million_tokens": {"luna": {"input": .2, "output": 1.2}}, "long_context_threshold_input_tokens": 272000, "long_context_input_multiplier": 2.0, "long_context_output_multiplier": 1.5}}
 
 
 class FuseTests(unittest.TestCase):
@@ -28,6 +28,10 @@ class FuseTests(unittest.TestCase):
     def test_price_estimate_and_long_context_multiplier(self):
         self.assertAlmostEqual(qf.price_estimate("luna", 1000, 1000, SELECTION), .0014)
         self.assertAlmostEqual(qf.price_estimate("luna", 300000, 1000, SELECTION), .1218)
+
+    def test_effort_constraints_filter_candidates(self):
+        self.assertEqual(qf.candidates(SELECTION, "high"), ["astra", "terra"])
+        self.assertEqual(qf.candidates(SELECTION, "high", effort="none"), ["terra"])
 
     def test_output_text(self):
         response = {"output": [{"type": "message", "content": [{"type": "output_text", "text": "a"}, {"type": "output_text", "text": "b"}]}]}

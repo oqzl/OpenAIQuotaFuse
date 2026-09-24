@@ -77,7 +77,7 @@ See [docs/CODEX_PLUGIN.md](docs/CODEX_PLUGIN.md) for local marketplace installat
     python3 python/openai_quota_fuse.py run "Review this repository architecture and design a broad refactor"
     # quality: auto -> high
 
-The classifier uses `gpt-5.6-luna`, low reasoning effort, and at most 8 output tokens. Its own `input_tokens + max_output_tokens` must fit complimentary quota before the classifier is called. If classification cannot run or returns anything other than `low` / `high`, OpenAIQuotaFuse does not spend money on routing; it falls back to `low`.
+The classifier uses `gpt-5.6-terra`, low reasoning effort, and at most 8 output tokens. Its own `input_tokens + max_output_tokens` must fit complimentary quota before the classifier is called. If classification cannot run or returns anything other than `low` / `high`, OpenAIQuotaFuse does not spend money on routing; it falls back to `low`.
 
 Explicit choices override auto routing:
 
@@ -87,13 +87,15 @@ Explicit choices override auto routing:
 
 `select` has no prompt to classify, so its default remains `low`.
 
-Complimentary `low` order is:
+Complimentary selection ranks models by capability per shared quota token, not normal API dollar price. `low` uses the larger 10M group first:
 
-    gpt-5.6-terra → gpt-5.6-luna → gpt-5.6-sol
+    gpt-5.6-terra → gpt-6-astra
 
-Terra and Luna share the high-volume complimentary token quota, so Terra is preferred there for capability per quota token. `high` is Sol-first:
+If the 10M group cannot fit the request, it tries the strongest reviewed model in the independent 1M group. `high` starts with that strongest 1M-group model:
 
-    gpt-5.6-sol → gpt-5.6-terra → gpt-5.6-luna
+    gpt-6-astra → gpt-5.6-terra
+
+The classifier also uses Terra because Terra and Luna consume the same 10M complimentary pool. GPT-6 Astra is skipped automatically when `reasoning.effort=none` is explicitly requested, because Astra does not support `none`.
 
 If no complimentary candidate can fit the conservative reservation, `run` may use the annual paid budget. Its default is `$5` and can be changed or disabled:
 

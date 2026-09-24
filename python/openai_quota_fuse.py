@@ -193,16 +193,27 @@ def check_model(model: str, tokens: int, models: dict[str, Any], usage: dict[str
     return tokens <= available, group, available
 
 
-def candidates(selection: dict[str, Any], quality: str, paid: bool = False) -> list[str]:
+def model_supports_effort(model: str, effort: str | None, selection: dict[str, Any]) -> bool:
+    if not effort:
+        return True
+    cfg = selection.get("reasoning_effort_constraints", {}).get(model, {})
+    return effort not in cfg.get("unsupported", [])
+
+
+def candidates(selection: dict[str, Any], quality: str, paid: bool = False, effort: str | None = None) -> list[str]:
     profiles = selection["paid_fallback"]["quality_profiles"] if paid else selection["quality_profiles"]
     if quality not in profiles:
         raise FuseError(f"unknown quality profile: {quality}")
-    return list(profiles[quality])
+    result = [model for model in profiles[quality] if model_supports_effort(model, effort, selection)]
+    if not result:
+        raise FuseError(f"no model in quality profile {quality} supports reasoning effort {effort}", 4)
+    return result
 
 
-def select_model(tokens: int, quality: str, models: dict[str, Any], selection: dict[str, Any], explicit: Iterable[str] = ()) -> str:
+def select_model(tokens: int, quality: str, models: dict[str, Any], selection: dict[str, Any],
+                 explicit: Iterable[str] = (), effort: str | None = None) -> str:
     usage = summarize_usage(fetch_usage(), models)
-    pool = list(explicit) or candidates(selection, quality)
+    pool = list(explicit) or candidates(selection, quality, effort=effort)
     for model in pool:
         try:
             allowed, _, _ = check_model(model, tokens, models, usage)
@@ -394,7 +405,7 @@ def emit_response(response: dict[str, Any], raw: bool) -> None:
 def run_paid(prompt: str, quality: str, explicit: str | None, max_output: int, raw: bool, effort: str | None,
              selection: dict[str, Any]) -> int:
     with ledger_lock():
-        model = explicit or candidates(selection, quality, paid=True)[0]
+        model = explicit or candidates(selection, quality, paid=True, effort=effort)[0]
         input_tokens = count_input_tokens({"model": model, "input": prompt})
         estimate = price_estimate(model, input_tokens, max_output, selection)
         cap = float(os.environ.get("OPENAI_ANNUAL_PAID_BUDGET_USD", selection["paid_fallback"]["default_annual_budget_usd"]))
@@ -438,7 +449,9 @@ def cmd_run(args: argparse.Namespace, models: dict[str, Any], selection: dict[st
         quality = selection["auto_quality"]["fallback_quality"] if args.model else classify_quality(prompt, models, selection)
     elif quality not in {"low", "high"}:
         raise FuseError("run quality must be one of: auto, low, high")
-    first = args.model or candidates(selection, quality)[0]
+    if args.model and not model_supports_effort(args.model, args.effort, selection):
+        raise FuseError(f"{args.model} does not support reasoning effort {args.effort}")
+    first = args.model or candidates(selection, quality, effort=args.effort)[0]
     input_tokens = count_input_tokens({"model": first, "input": prompt})
     required = input_tokens + args.max_output_tokens
     if args.model:
@@ -446,7 +459,7 @@ def cmd_run(args: argparse.Namespace, models: dict[str, Any], selection: dict[st
         model = first if allowed else None
     else:
         try:
-            model = select_model(required, quality, models, selection)
+            model = select_model(required, quality, models, selection, effort=args.effort)
         except FuseError as exc:
             if exc.code != 4:
                 raise

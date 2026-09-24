@@ -34,7 +34,7 @@ A configurable percentage of each daily quota is unavailable as a safety reserve
 
 For `run` auto quality, OpenAIQuotaFuse may issue one small classifier request before ordinary model selection. The checked-in policy currently uses:
 
-    classifier model: gpt-5.6-luna
+    classifier model: gpt-5.6-terra
     reasoning effort: low
     max output tokens: 8
     allowed output: low | high
@@ -54,19 +54,23 @@ Classifier routing diagnostics are written to stderr and do not replace the user
 
 ## Complimentary model selection
 
+Complimentary quota is shared by token count inside each model group. Normal API dollar price is therefore not the ranking criterion while the request fits complimentary quota. Within a group, prefer the strongest reviewed candidate that is compatible with the request.
+
 Resolved `low`:
 
     gpt-5.6-terra
-    gpt-5.6-luna
-    gpt-5.6-sol
+    gpt-6-astra
+
+`low` consumes the larger 10M group first with GPT-5.6 Terra. If that group cannot fit the conservative reservation, it tries GPT-6 Astra in the independent 1M group.
 
 Resolved `high`:
 
-    gpt-5.6-sol
+    gpt-6-astra
     gpt-5.6-terra
-    gpt-5.6-luna
 
-Complimentary ordering optimizes capability per shared quota token rather than API dollar price. Terra therefore precedes Luna while they share the same high-volume token pool.
+`high` starts with GPT-6 Astra because it is the strongest reviewed model in the 1M group, then falls back to GPT-5.6 Terra if the standard group cannot fit the request.
+
+The automatic-quality classifier also uses GPT-5.6 Terra: Luna and Terra share the same 10M quota pool, so the classifier does not save complimentary quota by choosing Luna merely because its normal API price is lower.
 
 ## Reasoning effort
 
@@ -75,7 +79,7 @@ Complimentary ordering optimizes capability per shared quota token rather than A
 - `quality` determines model preference order, either explicitly or after auto classification.
 - `effort` controls reasoning behavior inside the selected model.
 
-Supported values are `none`, `low`, `medium`, `high`, `xhigh`, and `max`. When omitted, OpenAIQuotaFuse omits `reasoning.effort` from the user request so the current model/API default remains authoritative. The internal classifier has its own separately configured reasoning effort.
+Supported values are `none`, `low`, `medium`, `high`, `xhigh`, and `max`. When omitted, OpenAIQuotaFuse omits `reasoning.effort` from the user request so the current model/API default remains authoritative. Candidate selection also respects model-specific effort constraints; GPT-6 Astra is skipped when `none` is explicitly requested because Astra does not support that effort. The internal classifier has its own separately configured reasoning effort.
 
 ## Annual paid fallback
 

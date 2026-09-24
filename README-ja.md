@@ -77,7 +77,7 @@ Webビューアーは Organization Costs の公式な年初来金額を表示で
     python3 python/openai_quota_fuse.py run "このリポジトリ全体を設計レビューして大規模リファクタ案を作って"
     # quality: auto -> high
 
-classifier は `gpt-5.6-luna` + low reasoning + 最大8 output tokens の小さな判定タスクです。classifier 自身についても `input_tokens + max_output_tokens` を無料 quota に予約できる場合だけ呼びます。classifier が実行できない、または `low` / `high` 以外を返した場合は、有料判定へ fallback せず `low` を使います。
+classifier は `gpt-5.6-terra` + low reasoning + 最大8 output tokens の小さな判定タスクです。classifier 自身についても `input_tokens + max_output_tokens` を無料 quota に予約できる場合だけ呼びます。classifier が実行できない、または `low` / `high` 以外を返した場合は、有料判定へ fallback せず `low` を使います。
 
 明示指定は自動判定より優先します。
 
@@ -87,13 +87,15 @@ classifier は `gpt-5.6-luna` + low reasoning + 最大8 output tokens の小さ�
 
 `select` は prompt を持たないため、自動難易度判定は行わず既定 `low` のままです。
 
-`low` の無料候補順は:
+complimentary quota 内では通常API価格ではなく、同じgroupでの capability per quota token を優先します。`low` は大きい10M groupから先に使います。
 
-    gpt-5.6-terra → gpt-5.6-luna → gpt-5.6-sol
+    gpt-5.6-terra → gpt-6-astra
 
-Terra と Luna は high-volume の無料 token quota を共有するため、無料枠では quota token あたりの能力を優先して Terra を先にします。`high` は:
+10M groupにrequestが入らない場合だけ、独立した1M groupでreview済み最上位のAstraを試します。`high` は最初から1M groupのAstraを優先します。
 
-    gpt-5.6-sol → gpt-5.6-terra → gpt-5.6-luna
+    gpt-6-astra → gpt-5.6-terra
+
+classifierもTerraを使います。TerraとLunaは同じ10M complimentary poolを消費するため、通常API価格が安いことだけを理由にLunaを使いません。明示的に `reasoning.effort=none` を指定した場合、Astraは `none` 非対応なので自動的に候補から外します。
 
 無料候補が保守的な予約量を確保できない場合だけ、年間有料予算を使えます。既定は `$5` です。
 

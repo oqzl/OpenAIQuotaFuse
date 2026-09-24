@@ -1,6 +1,6 @@
 {
   "schema_version": 1,
-  "last_reviewed": "2026-08-26",
+  "last_reviewed": "2026-09-24",
   "review_interval_days": 30,
   "sources": {
     "eligibility": "https://help.openai.com/en/articles/10306912-sharing-feedback-evals-and-api-data-with-openai",
@@ -9,25 +9,22 @@
   },
   "default_candidates": [
     "gpt-5.6-terra",
-    "gpt-5.6-luna",
-    "gpt-5.6-sol"
+    "gpt-6-astra"
   ],
   "default_quality": "low",
   "default_run_quality": "auto",
   "quality_profiles": {
     "low": [
       "gpt-5.6-terra",
-      "gpt-5.6-luna",
-      "gpt-5.6-sol"
+      "gpt-6-astra"
     ],
     "high": [
-      "gpt-5.6-sol",
-      "gpt-5.6-terra",
-      "gpt-5.6-luna"
+      "gpt-6-astra",
+      "gpt-5.6-terra"
     ]
   },
   "auto_quality": {
-    "classifier_model": "gpt-5.6-luna",
+    "classifier_model": "gpt-5.6-terra",
     "max_output_tokens": 8,
     "reasoning_effort": "low",
     "fallback_quality": "low",
@@ -48,13 +45,29 @@
       ]
     },
     "pricing_usd_per_million_tokens": {
-      "gpt-5.6-luna": {"input": 0.20, "output": 1.20},
-      "gpt-5.6-terra": {"input": 2.00, "output": 12.00},
-      "gpt-5.6-sol": {"input": 4.00, "output": 20.00}
+      "gpt-5.6-luna": {
+        "input": 0.2,
+        "output": 1.2
+      },
+      "gpt-5.6-terra": {
+        "input": 2,
+        "output": 12
+      },
+      "gpt-5.6-sol": {
+        "input": 4,
+        "output": 20
+      }
     },
     "long_context_threshold_input_tokens": 272000,
-    "long_context_input_multiplier": 2.0,
+    "long_context_input_multiplier": 2,
     "long_context_output_multiplier": 1.5
   },
-  "policy": "Complimentary quota is token-count based within each quota group. run defaults to auto quality: an inexpensive Luna classifier may promote difficult tasks to high before normal model selection; explicit low/high and explicit model selection bypass classification. select remains low by default because it has no prompt to classify. Paid fallback remains a separate dollar-budget policy."
+  "policy": "Complimentary selection optimizes capability per shared quota token rather than normal API dollar price. low consumes the larger 10M group first with gpt-5.6-terra, then falls back to the 1M group with gpt-6-astra; high starts with gpt-6-astra. The auto classifier uses gpt-5.6-terra inside the 10M group. Model/effort compatibility is enforced before dispatch. Paid fallback remains a separate dollar-budget policy.",
+  "reasoning_effort_constraints": {
+    "gpt-6-astra": {
+      "unsupported": [
+        "none"
+      ]
+    }
+  }
 }

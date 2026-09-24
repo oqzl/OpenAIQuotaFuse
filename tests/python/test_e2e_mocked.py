@@ -148,20 +148,34 @@ class MockedE2ETest(unittest.TestCase):
         self.assertFalse(self.classifier_calls())
         self.assertEqual(self.inference_calls()[-1]["reasoning"]["effort"], "high")
 
-    def test_auto_high_routes_to_sol(self):
+    def test_auto_high_routes_to_astra(self):
         MockState.classifier_result = "high"
         result = self.run_cli("run", "-o", "20", "-i", "design and implement a multi-step repository refactor")
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertIn("quality: auto -> high", result.stderr)
-        self.assertIn("model: gpt-5.6-sol", result.stderr)
+        self.assertIn("model: gpt-6-astra", result.stderr)
         self.assertEqual(len(self.classifier_calls()), 1)
-        self.assertEqual(self.inference_calls()[-1]["model"], "gpt-5.6-sol")
+        self.assertEqual(self.classifier_calls()[0]["model"], "gpt-5.6-terra")
+        self.assertEqual(self.inference_calls()[-1]["model"], "gpt-6-astra")
 
     def test_explicit_low_bypasses_classifier_and_routes_to_terra(self):
         result = self.run_cli("run", "-q", "low", "-o", "20", "-i", "explicit low")
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertIn("model: gpt-5.6-terra", result.stderr)
         self.assertFalse(self.classifier_calls())
+
+    def test_auto_high_with_none_skips_astra(self):
+        MockState.classifier_result = "high"
+        result = self.run_cli("run", "-e", "none", "-o", "20", "-i", "high task without reasoning")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn("quality: auto -> high", result.stderr)
+        self.assertIn("model: gpt-5.6-terra", result.stderr)
+        self.assertEqual(self.inference_calls()[-1]["reasoning"]["effort"], "none")
+
+    def test_explicit_astra_rejects_none_effort(self):
+        result = self.run_cli("run", "-m", "gpt-6-astra", "-e", "none", "-o", "20", "-i", "invalid combination")
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("does not support reasoning effort none", result.stderr)
 
     def test_stdin_and_raw_output(self):
         result = self.run_cli("run", "-m", "gpt-5.6-luna", "-o", "20", stdin="hello from stdin")
