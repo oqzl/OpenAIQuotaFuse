@@ -68,11 +68,13 @@
 
 ## P1 — Model policy maintenance
 
-- [ ] Re-check incentive eligibility, quota groups, availability/deprecation, and API pricing whenever the policy audit expires.
-- [ ] Re-evaluate whether each automatic-selection candidate still has a reason to exist relative to newer models.
-- [ ] Keep complimentary-quota ordering and paid-fallback ordering independently justified.
-- [ ] Keep older active models in accounting even when removed from automatic selection.
-- [ ] Add tests ensuring every automatic-selection candidate exists in `models.json`.
+- [x] Re-check incentive eligibility, quota groups, availability/deprecation, and API pricing whenever the policy audit expires.
+- [x] Re-evaluate whether each automatic-selection candidate still has a reason to exist relative to newer models.
+- [x] Keep complimentary-quota ordering and paid-fallback ordering independently justified.
+- [x] Keep older active models in accounting even when removed from automatic selection.
+- [x] Add tests ensuring every automatic-selection candidate exists in `models.json`.
+- [x] Refresh stale policy from OpenAI primary sources and create/update a review PR without auto-merge.
+- [x] Prefer a dedicated `OPENAI_MODEL_POLICY_KEY`, with `OPENAI_API_KEY` as a fallback for the maintenance workflow.
 
 ## P1 — Tests
 
