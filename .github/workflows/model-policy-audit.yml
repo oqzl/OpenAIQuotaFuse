@@ -61,6 +61,8 @@ jobs:
           set -euo pipefail
           branch="automation/model-policy-refresh"
           report="/tmp/model-policy-refresh.md"
+          reviewer="oqzl"
+          title="Review required: Refresh OpenAI model policy"
 
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
@@ -88,12 +90,16 @@ jobs:
 
           if [ -n "$pr_number" ]; then
             gh pr edit "$pr_number" \
-              --title "Refresh OpenAI model policy" \
-              --body-file "$report"
+              --title "$title" \
+              --body-file "$report" \
+              --add-reviewer "$reviewer" \
+              --add-assignee "$reviewer"
           else
             gh pr create \
               --head "$branch" \
               --base main \
-              --title "Refresh OpenAI model policy" \
-              --body-file "$report"
+              --title "$title" \
+              --body-file "$report" \
+              --reviewer "$reviewer" \
+              --assignee "$reviewer"
           fi
