@@ -68,11 +68,13 @@
 
 ## P1 — モデルポリシー保守
 
-- [ ] audit 期限ごとに incentive 対象、quota group、availability/deprecation、pricing を再確認する。
-- [ ] 自動選択候補を新モデルとの比較で再評価する。
-- [ ] 無料 quota と有料 fallback の候補順を別々に正当化する。
-- [ ] 自動選択から外した active model も会計レジストリには残す。
-- [ ] 全候補が `models.json` に存在するテストを追加する。
+- [x] audit 期限ごとに incentive 対象、quota group、availability/deprecation、pricing を再確認する。
+- [x] 自動選択候補を新モデルとの比較で再評価する。
+- [x] 無料 quota と有料 fallback の候補順を別々に正当化する。
+- [x] 自動選択から外した active model も会計レジストリには残す。
+- [x] 全候補が `models.json` に存在するテストを追加する。
+- [x] stale なポリシーを OpenAI 一次資料から更新し、自動mergeせず review 用PRを作成・更新する。
+- [x] 保守workflowでは専用 `OPENAI_MODEL_POLICY_KEY` を優先し、未設定時のみ `OPENAI_API_KEY` をfallbackに使う。
 
 ## P1 — テスト
 

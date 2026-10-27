@@ -2,16 +2,98 @@ name: Model policy audit
 
 on:
   workflow_dispatch:
+    inputs:
+      force_refresh:
+        description: Refresh even when the policy is still within the review interval
+        required: false
+        default: false
+        type: boolean
   schedule:
     - cron: '17 3 * * 1'
 
 permissions:
-  contents: read
+  contents: write
+  pull-requests: write
+
+concurrency:
+  group: model-policy-refresh
+  cancel-in-progress: false
 
 jobs:
   audit:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Refresh stale model policy
+        env:
+          OPENAI_MODEL_POLICY_KEY: ${{ secrets.OPENAI_MODEL_POLICY_KEY }}
+          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+          MODEL_POLICY_REPORT: /tmp/model-policy-refresh.md
+        run: |
+          if [ "${{ inputs.force_refresh }}" = "true" ]; then
+            python3 scripts/refresh-model-policy.py --force
+          else
+            python3 scripts/refresh-model-policy.py
+          fi
+
       - name: Audit model registry and selection policy
         run: bash scripts/audit-model-policy.sh
+
+      - name: Detect policy changes
+        id: changes
+        shell: bash
+        run: |
+          if git diff --quiet -- models.json model-selection.json; then
+            echo "changed=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "changed=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Publish refresh pull request
+        if: steps.changes.outputs.changed == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          branch="automation/model-policy-refresh"
+          report="/tmp/model-policy-refresh.md"
+
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git switch -C "$branch"
+          git add models.json model-selection.json
+          git commit -m "Refresh OpenAI model policy"
+
+          git fetch origin "$branch:refs/remotes/origin/$branch" || true
+          git push --force-with-lease origin "HEAD:$branch"
+
+          if [ ! -s "$report" ]; then
+            cat > "$report" <<'EOF'
+          ## Automated model-policy refresh
+
+          OpenAIQuotaFuse refreshed the stale model registry and selection policy from current OpenAI primary sources. Review the policy diff before merging.
+          EOF
+          fi
+
+          pr_number="$(gh pr list \
+            --head "$branch" \
+            --base main \
+            --state open \
+            --json number \
+            --jq '.[0].number // empty')"
+
+          if [ -n "$pr_number" ]; then
+            gh pr edit "$pr_number" \
+              --title "Refresh OpenAI model policy" \
+              --body-file "$report"
+          else
+            gh pr create \
+              --head "$branch" \
+              --base main \
+              --title "Refresh OpenAI model policy" \
+              --body-file "$report"
+          fi
